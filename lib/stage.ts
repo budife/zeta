@@ -105,3 +105,42 @@ export function clipPathPolygon(
     })
     .join(", ");
 }
+
+/**
+ * Maps a point on the display (in fraction of stage, 0..1) to the
+ * corresponding pixel in the source video, accounting for CSS
+ * `object-fit: cover` centering and mirror.
+ *
+ * Both camera and media use object-fit: cover on the same stage, so this
+ * mapping works for either. The display X is already in mirrored space
+ * (matching what the user sees on screen).
+ */
+export function displayToSourceVideo(
+  displayX: number,
+  displayY: number,
+  videoWidth: number,
+  videoHeight: number,
+  stageWidth: number,
+  stageHeight: number
+): { x: number; y: number } {
+  // Reverse mirror to get the source-x.
+  const unmirroredX = MIRROR_PREVIEW ? 1 - displayX : displayX;
+
+  const px = unmirroredX * stageWidth;
+  const py = displayY * stageHeight;
+
+  // object-fit: cover scales the source to fill the stage, then centers it.
+  const cover = Math.max(stageWidth / videoWidth, stageHeight / videoHeight);
+  const renderedW = videoWidth * cover;
+  const renderedH = videoHeight * cover;
+  const offsetX = (stageWidth - renderedW) / 2;
+  const offsetY = (stageHeight - renderedH) / 2;
+
+  const sourceX = (px - offsetX) / cover;
+  const sourceY = (py - offsetY) / cover;
+
+  return {
+    x: Math.round(Math.max(0, Math.min(videoWidth, sourceX))),
+    y: Math.round(Math.max(0, Math.min(videoHeight, sourceY))),
+  };
+}

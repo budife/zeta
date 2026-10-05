@@ -325,8 +325,9 @@ button {
 .media-layer__content {
   position: absolute;
   inset: 0;
-  /* transform (scale/rotate) set imperatively by the snapshot listener. */
-  will-change: transform;
+  /* Mirror the content to match the mirrored camera preview, so the content
+     inside the clipping window aligns perfectly with the camera behind it. */
+  transform: scaleX(-1);
 }
 
 .media-layer__media {
