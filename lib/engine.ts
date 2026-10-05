@@ -457,20 +457,10 @@ export class HandFrameEngine {
       regionConfidence: this.regionLock.confidence,
     });
 
-    // ------------------------------------------------------------ snapshot
-    // A region transform only exists when a region is actually known. With
-    // `kind === null` the content stays full-screen (plain clipping) — no
-    // accidental zoom-out to the whole viewBox.
-    const regionTransform =
-      active && frame && this.regionLock.kind !== null
-        ? mapRegionTransform(
-            this.regionLock.kind,
-            { width: frame.width, height: frame.height },
-            width,
-            height,
-            { rotation: MIRROR_PREVIEW ? -frame.rotation : frame.rotation }
-          )
-        : null;
+    // Region transform is disabled for now — the media stays full-frame
+    // behind the clipping window without any zoom/pan. The classifier still
+    // runs for the debug readout but does not affect rendering.
+    const regionTransform = null as import("./regionMapping").RegionTransform | null;
     const snapshot: Snapshot = {
       hands: (handResult.landmarks ?? []).map((lm) =>
         toPixelLandmarks(lm, width, height)

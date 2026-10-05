@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { clipPathPolygon } from "@/lib/stage";
-import { regionTransformStyle } from "@/lib/regionMapping";
 import type { Snapshot } from "@/lib/types";
 
 export type MediaLayerProps = {
@@ -12,32 +11,27 @@ export type MediaLayerProps = {
 };
 
 /**
- * Two nested responsibilities, deliberately split across two DOM layers:
+ * Two nested responsibilities, split across two DOM layers:
  *
- *   MediaLayer            (root, opacity only)
+ *   MediaLayer            (root, opacity 1, no background)
  *   └── ClipWindow        (clip-path only — the hand-made window)
- *       └── TransformedMedia  (transform only — zoom / pan / rotation of content)
- *           └── <img> / <video>   (object-fit: cover)
+ *       └── MediaContent   (full-frame, untransformed — object-fit: cover)
+ *           └── <img> / <video>
  *
- * The clip and the transform must never share an element: a CSS transform is
- * applied to the element *including its clip*, so transforming a clipped layer
- * would move the window itself. Keeping them on separate elements means the
- * zoom cannot change the window's position or size.
+ * The clip and the transform must never share an element (CSS transform
+ * applies to the element *including* its clip). For now the content has no
+ * transform at all — the media stays full-frame behind the window. Region
+ * mapping (zoom/pan) is disabled.
  *
- * Opacity follows `snapshot.frameActive` (the selection state machine) — never
- * `windowCorners.length` — so a one-frame detection dropout does not blink.
- *
- * All values are written straight to the DOM from the snapshot, so React never
- * re-renders at frame rate.
+ * Visibility is controlled by clip-path: `inset(50%)` (zero-area) when
+ * inactive, the hand-made polygon when active. No opacity toggling — the
+ * camera is always visible through transparent areas.
  */
 export function MediaLayer({ subscribe, src }: MediaLayerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const clipRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const [isVideo, setIsVideo] = useState(false);
-
-  // Videos need to be told to play; <img> and <svg> do not.
   useEffect(() => {
     setIsVideo(/\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(src));
   }, [src]);
@@ -57,10 +51,9 @@ export function MediaLayer({ subscribe, src }: MediaLayerProps) {
     const off = subscribe((snapshot) => {
       const root = rootRef.current;
       const clip = clipRef.current;
-      const content = contentRef.current;
-      if (!root || !clip || !content) return;
+      if (!root || !clip) return;
 
-      const { windowCorners, videoWidth, videoHeight, regionTransform, frameActive } =
+      const { windowCorners, videoWidth, videoHeight, frameActive } =
         snapshot;
 
       // Visibility is controlled by clip-path: when the frame is inactive we
@@ -75,18 +68,6 @@ export function MediaLayer({ subscribe, src }: MediaLayerProps) {
       } else {
         clip.style.clipPath = "inset(50%)";
       }
-
-      // Content: transform only. No region → content stays full-screen
-      // (plain clipping), which is the correct fallback.
-      if (regionTransform) {
-        content.style.transformOrigin = `${(regionTransform.originX * 100).toFixed(
-          2
-        )}% ${(regionTransform.originY * 100).toFixed(2)}%`;
-        content.style.transform = regionTransformStyle(regionTransform);
-      } else {
-        content.style.transformOrigin = "50% 50%";
-        content.style.transform = "none";
-      }
     });
     return off;
   }, [subscribe]);
@@ -94,7 +75,7 @@ export function MediaLayer({ subscribe, src }: MediaLayerProps) {
   return (
     <div ref={rootRef} className="media-layer" aria-hidden="true">
       <div ref={clipRef} className="media-layer__clip">
-        <div ref={contentRef} className="media-layer__content">
+        <div className="media-layer__content">
           {isVideo ? (
             <video
               ref={mediaRef}
