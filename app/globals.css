@@ -198,8 +198,8 @@ button {
 }
 
 .frame-rect--candidate {
-  border: 2px dashed rgba(255, 255, 255, 0.42);
-  background: rgba(255, 255, 255, 0.035);
+  border: 2px dashed var(--accent);
+  background: rgba(125, 211, 252, 0.04);
 }
 
 .frame-outline {
@@ -212,12 +212,12 @@ button {
 }
 
 .frame-outline__polygon {
-  fill: rgba(125, 211, 252, 0.07);
-  stroke: rgba(125, 211, 252, 0.95);
-  stroke-width: 0.5;
-  /* The viewBox is 0..100, so the stroke would scale with it; keep it in CSS px. */
+  fill: rgba(125, 211, 252, 0.06);
+  stroke: var(--accent);
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
+  filter: drop-shadow(0 0 6px rgba(125, 211, 252, 0.25));
 }
 
 .frame-rect__label {
@@ -241,7 +241,6 @@ button {
   background: #fbbf24;
   box-shadow: 0 0 0 2px rgba(8, 9, 13, 0.85), 0 0 12px rgba(251, 191, 36, 0.55);
   opacity: 0;
-  transition: opacity 0.12s ease;
 }
 
 /* ---------------------------------------------------------- vector overlay */
