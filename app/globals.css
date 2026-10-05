@@ -586,7 +586,6 @@ button {
   border: 1.5px dashed rgba(244, 114, 182, 0.9);
   border-radius: 8px;
   opacity: 0;
-  transition: opacity 0.12s ease;
 }
 
 .region-tracker-layer {
@@ -602,7 +601,6 @@ button {
   border-radius: 8px;
   background: rgba(52, 211, 153, 0.12);
   opacity: 0;
-  transition: opacity 0.12s ease;
 }
 
 .region-label {
@@ -617,7 +615,6 @@ button {
   border-radius: 4px;
   transform: translateY(-115%);
   opacity: 0;
-  transition: opacity 0.12s ease;
 }
 
 .debug-panel {
