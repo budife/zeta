@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="c10bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b1a34"/><stop offset="1" stop-color="#130b18"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="22" fill="url(#c10bg)"/>
+  <path d="M52 168c0-22 15-34 48-34s48 12 48 34z" fill="#38bdf8"/>
+  <path d="M52 168c0-22 15-34 48-34s48 12 48 34z" fill="none" stroke="#0b0f16" stroke-width="4"/>
+  <rect x="88" y="118" width="24" height="26" rx="10" fill="#e8b48f" stroke="#0b0f16" stroke-width="4"/>
+  <circle cx="100" cy="88" r="44" fill="#f6cfa8" stroke="#0b0f16" stroke-width="4"/>
+  <path d="M56 84a44 44 0 0 1 88 0c0-26-20-40-44-40S56 58 56 84z" fill="#0f172a"/>
+  <path d="M56 84a44 44 0 0 1 88 0" fill="none" stroke="#0b0f16" stroke-width="4"/>
+  <path d="M66 64c10 8 22 12 34 12s24-4 34-12" fill="none" stroke="#0b0f16" stroke-width="4" stroke-linecap="round"/>
+  <path d="M54 86a46 46 0 0 1 92 0" fill="none" stroke="#0b0f16" stroke-width="7"/>
+  <path d="M54 86a46 46 0 0 1 92 0" fill="none" stroke="#38bdf8" stroke-width="3.4"/>
+  <rect x="40" y="78" width="24" height="34" rx="11" fill="#38bdf8" stroke="#0b0f16" stroke-width="4"/>
+  <rect x="136" y="78" width="24" height="34" rx="11" fill="#38bdf8" stroke="#0b0f16" stroke-width="4"/>
+  <circle cx="84" cy="92" r="4.5" fill="#0b0f16"/>
+  <circle cx="116" cy="92" r="4.5" fill="#0b0f16"/>
+  <path d="M86 112c8 7 20 7 28 0" fill="none" stroke="#0b0f16" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="72" cy="102" r="5" fill="#f2a8b8" opacity="0.5"/>
+  <circle cx="128" cy="102" r="5" fill="#f2a8b8" opacity="0.5"/>
+</svg>

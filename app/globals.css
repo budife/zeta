@@ -1,0 +1,685 @@
+:root {
+  --bg: #08090d;
+  --bg-2: #0e1118;
+  --panel: rgba(255, 255, 255, 0.045);
+  --panel-strong: rgba(255, 255, 255, 0.085);
+  --stroke: rgba(255, 255, 255, 0.12);
+  --stroke-strong: rgba(255, 255, 255, 0.22);
+  --text: #eef1f6;
+  --text-dim: #9aa3b2;
+  --text-faint: #626b7a;
+  --accent: #7dd3fc;
+  --accent-2: #f472b6;
+  --ok: #34d399;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 520px at 12% -10%, rgba(125, 211, 252, 0.12), transparent 60%),
+    radial-gradient(820px 520px at 100% 0%, rgba(244, 114, 182, 0.1), transparent 60%),
+    var(--bg);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ------------------------------------------------------------------- layout */
+
+.app {
+  width: min(100% - 2.5rem, 980px);
+  margin-inline: auto;
+  padding-block: clamp(1.5rem, 4vw, 3rem) 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.25rem, 3vw, 2rem);
+}
+
+.app__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.app__header h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 3.4vw, 2rem);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.app__subtitle {
+  margin: 0.45rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  max-width: 46ch;
+}
+
+.app__footer {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* -------------------------------------------------------------------- stage */
+
+.stage {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #05060a;
+  border: 1px solid var(--stroke);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 24px 60px -28px rgba(0, 0, 0, 0.9);
+  aspect-ratio: 16 / 9;
+}
+
+.camera-view {
+  position: absolute;
+  inset: 0;
+}
+
+.camera-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* Selfie mirror, so moving a hand to the right moves the overlay to the right. */
+  transform: scaleX(-1);
+  background: #05060a;
+}
+
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(600px 340px at 50% 30%, rgba(125, 211, 252, 0.12), transparent 65%),
+    linear-gradient(180deg, #0b0e15, #07080d);
+}
+
+.camera-placeholder-card {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: 34ch;
+}
+
+.camera-icon {
+  color: var(--accent);
+  opacity: 0.9;
+  filter: drop-shadow(0 6px 18px rgba(125, 211, 252, 0.35));
+}
+
+.camera-placeholder-card h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+}
+
+.camera-placeholder-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.error-text {
+  color: #fca5a5 !important;
+  font-size: 0.82rem !important;
+}
+
+.stop-button {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-strong);
+  background: rgba(8, 9, 13, 0.72);
+  color: var(--text);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.stop-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* ------------------------------------------------------------- hand frame */
+
+.hand-frame-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.frame-rect {
+  position: absolute;
+  border-radius: 12px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  will-change: transform, opacity;
+}
+
+.frame-rect--candidate {
+  border: 2px dashed rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.frame-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  overflow: visible;
+}
+
+.frame-outline__polygon {
+  fill: rgba(125, 211, 252, 0.07);
+  stroke: rgba(125, 211, 252, 0.95);
+  stroke-width: 0.5;
+  /* The viewBox is 0..100, so the stroke would scale with it; keep it in CSS px. */
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+
+.frame-rect__label {
+  position: absolute;
+  top: -1.55rem;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  transform: scaleX(-1);
+}
+
+.frame-corner {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border-radius: 4px;
+  background: #fbbf24;
+  box-shadow: 0 0 0 2px rgba(8, 9, 13, 0.85), 0 0 12px rgba(251, 191, 36, 0.55);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* ---------------------------------------------------------- vector overlay */
+
+.vector-wrapper {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  will-change: transform, opacity;
+  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.45));
+}
+
+.vector-anchor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.vector-art {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.vector-art svg,
+.vector-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.vector-shadow {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 4%;
+  height: 12%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
+  filter: blur(6px);
+}
+
+/* ------------------------------------------------------------- media layer */
+/*
+ * The media fills the ENTIRE stage and is clipped to the hand-made window with
+ * `clip-path`. The frame is a window, not a container: the media is never
+ * scaled down to fit inside it.
+ *
+ * DOM structure:
+ *   .media-layer          (root, opacity only — follows frameActive)
+ *   └── .media-layer__clip   (clip-path only — the hand-made window)
+ *       └── .media-layer__content  (transform only — zoom/pan/rotation)
+ *           └── .media-layer__media  (img/video, object-fit: cover)
+ *
+ * Keeping clip and transform on separate elements prevents the zoom from
+ * shifting the clipping window (see audit finding #1).
+ */
+.media-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 1;
+  /*
+   * Visibility is controlled by clip-path, NOT opacity.
+   * - frame active  → clip to the hand-made polygon → media visible inside
+   * - frame inactive → clip to a zero-area shape → media invisible
+   * The camera behind is always visible through the transparent layer.
+   */
+  will-change: clip-path;
+}
+
+.media-layer__clip {
+  position: absolute;
+  inset: 0;
+  /* clip-path set imperatively by the snapshot listener; never a transform. */
+}
+
+.media-layer__content {
+  position: absolute;
+  inset: 0;
+  /* transform (scale/rotate) set imperatively by the snapshot listener. */
+  will-change: transform;
+}
+
+.media-layer__media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* The camera preview is mirrored; the media is content, so it is NOT flipped. */
+  user-select: none;
+}
+
+/* ----------------------------------------------------------------- controls */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.media-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.media-controls__name {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  opacity: 0.75;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ghost-button--subtle {
+  border-style: dashed;
+}
+
+.primary-button {
+  appearance: none;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.24), rgba(125, 211, 252, 0.14));
+  color: #eaf6ff;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0.7rem 1.35rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease;
+  box-shadow: 0 10px 26px -14px rgba(125, 211, 252, 0.8);
+}
+
+.primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -14px rgba(125, 211, 252, 0.95);
+}
+
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.primary-button--wide {
+  width: 100%;
+  padding-block: 0.95rem;
+}
+
+.ghost-button {
+  appearance: none;
+  border: 1px solid var(--stroke-strong);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-size: 0.84rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.ghost-button:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: var(--panel-strong);
+}
+
+.toggle-button {
+  appearance: none;
+  border: 1px solid var(--stroke-strong);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toggle-button--on {
+  color: #08090d;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ------------------------------------------------------------- status panel */
+
+.status-panel {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.55rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.status-item__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.status-item--ok .status-item__dot {
+  background: var(--ok);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
+}
+
+.status-item--ok {
+  color: var(--text);
+}
+
+.status-item__label {
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+.status-item__value {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
+
+/* ----------------------------------------------------- character selector */
+
+.character-selector__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.character-selector__hint {
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 0.55rem;
+}
+
+.character-chip {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.45rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--stroke);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.character-chip:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--stroke-strong);
+  color: var(--text);
+}
+
+.character-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.character-chip--selected {
+  border-color: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.35), 0 10px 24px -16px rgba(125, 211, 252, 0.9);
+}
+
+.character-chip__thumb {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.character-chip__label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------- debug */
+
+.debug-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.face-tracker-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.face-box {
+  position: absolute;
+  border: 1.5px dashed rgba(244, 114, 182, 0.9);
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.region-tracker-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.region-box {
+  position: absolute;
+  border: 2px solid rgba(52, 211, 153, 0.95);
+  border-radius: 8px;
+  background: rgba(52, 211, 153, 0.12);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.region-label {
+  position: absolute;
+  padding: 2px 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: #052e1c;
+  background: rgba(52, 211, 153, 0.95);
+  border-radius: 4px;
+  transform: translateY(-115%);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.debug-panel {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 7;
+  min-width: 190px;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(5, 6, 10, 0.78);
+  border: 1px solid var(--stroke-strong);
+  backdrop-filter: blur(12px);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.debug-panel__title {
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.debug-list {
+  margin: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.debug-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.debug-list dd {
+  margin: 0;
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------- responsive */
+
+@media (max-width: 560px) {
+  .app {
+    width: min(100% - 1.25rem, 980px);
+  }
+  .app__header h1 {
+    font-size: 1.2rem;
+  }
+  .status-item__value {
+    font-size: 0.68rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
