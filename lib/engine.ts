@@ -27,13 +27,6 @@ import {
   REGION_CONFIDENCE_TAU,
   type ClassificationResult,
 } from "./regions";
-import {
-  advanceLipInteraction,
-  computeLipDeformation,
-  INITIAL_LIP_STATE,
-  type LipInteractionState,
-  type FingerData,
-} from "./lipDeformation";
 import { mapRegionTransform } from "./regionMapping";
 import { MIRROR_PREVIEW } from "./stage";
 
@@ -123,8 +116,6 @@ export class HandFrameEngine {
     label: "—",
     confidence: 0,
   };
-
-  private lipInteraction: LipInteractionState = INITIAL_LIP_STATE;
 
   private status: AppStatus = {
     camera: "off",
@@ -383,7 +374,6 @@ export class HandFrameEngine {
       this.cornerSmoother.reset();
       this.lastFaceBox = null;
       this.faceState = "none";
-      this.lipInteraction = INITIAL_LIP_STATE;
     }
 
     let frame: FrameRect | null = null;
@@ -458,22 +448,6 @@ export class HandFrameEngine {
       this.regionLock = { kind: null, label: "—", confidence: 0 };
     }
 
-    // ------------------------------------------------------- lip deformation
-    // Fingertips from the hand result — index tip (8) and thumb tip (4) per hand.
-    const fingerData: FingerData[] = [];
-    for (const hand of handResult.landmarks ?? []) {
-      if (hand.length >= 9) {
-        fingerData.push({ x: hand[4].x, y: hand[4].y }); // thumb tip
-        fingerData.push({ x: hand[8].x, y: hand[8].y }); // index tip
-      }
-    }
-    this.lipInteraction = advanceLipInteraction(
-      this.lipInteraction,
-      faceLandmarksThisFrame.length ? faceLandmarksThisFrame : null,
-      fingerData
-    );
-    const lipDeformation = computeLipDeformation(this.lipInteraction);
-
     // -------------------------------------------------------------- status
     this.patchStatus({
       hands: detection.handCount,
@@ -506,7 +480,6 @@ export class HandFrameEngine {
       reason: detection.corners.length === 4 ? validity.reason : detection.reason,
       videoWidth: width,
       videoHeight: height,
-      lipDeformation,
     };
 
     // Diagnostic hook for manual inspection / automated checks.
