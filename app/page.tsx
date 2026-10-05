@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraView } from "@/components/CameraView";
 import { DebugOverlay } from "@/components/DebugOverlay";
 import { HandFrame } from "@/components/HandFrame";
-import { LipOverlay } from "@/components/LipOverlay";
 import { MediaLayer } from "@/components/MediaLayer";
 import { StatusPanel } from "@/components/StatusPanel";
 import { useHandFrameEngine } from "@/hooks/useHandFrameEngine";
@@ -109,7 +108,6 @@ export default function HomePage() {
               src={media}
             />
             <HandFrame subscribe={subscribeSnapshot} active={frameActive} />
-            <LipOverlay subscribe={subscribeSnapshot} enabled={true} />
             <DebugOverlay subscribe={subscribeSnapshot} enabled={debug} />
           </>
         )}

@@ -293,13 +293,9 @@ button {
  * scaled down to fit inside it.
  *
  * DOM structure:
- *   .media-layer          (root, opacity only — follows frameActive)
+ *   .media-layer          (root)
  *   └── .media-layer__clip   (clip-path only — the hand-made window)
- *       └── .media-layer__content  (transform only — zoom/pan/rotation)
- *           └── .media-layer__media  (img/video, object-fit: cover)
- *
- * Keeping clip and transform on separate elements prevents the zoom from
- * shifting the clipping window (see audit finding #1).
+ *       └── canvas.media-layer__canvas  (template + optional lip deformation)
  */
 .media-layer {
   position: absolute;
@@ -307,36 +303,18 @@ button {
   z-index: 5;
   pointer-events: none;
   opacity: 1;
-  /*
-   * Visibility is controlled by clip-path, NOT opacity.
-   * - frame active  → clip to the hand-made polygon → media visible inside
-   * - frame inactive → clip to a zero-area shape → media invisible
-   * The camera behind is always visible through the transparent layer.
-   */
   will-change: clip-path;
 }
 
 .media-layer__clip {
   position: absolute;
   inset: 0;
-  /* clip-path set imperatively by the snapshot listener; never a transform. */
 }
 
-.media-layer__content {
-  position: absolute;
-  inset: 0;
-  /* Mirror the content to match the mirrored camera preview, so the content
-     inside the clipping window aligns perfectly with the camera behind it. */
-  transform: scaleX(-1);
-}
-
-.media-layer__media {
+.media-layer__canvas {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
-  /* The camera preview is mirrored; the media is content, so it is NOT flipped. */
-  user-select: none;
 }
 
 /* ----------------------------------------------------------- lip deformation */
@@ -357,7 +335,6 @@ button {
   stroke: #c53030;
   stroke-width: 0.3;
   vector-effect: non-scaling-stroke;
-  stroke-linejoin: round;
 }
 
 /* ----------------------------------------------------------------- controls */

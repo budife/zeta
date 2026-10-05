@@ -1,64 +1,42 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { clipPathPolygon } from "@/lib/stage";
+import { clipPathPolygon, MIRROR_PREVIEW } from "@/lib/stage";
 import type { Snapshot } from "@/lib/types";
 
 export type MediaLayerProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
-  /** Media URL: any image (SVG/PNG/JPG/WEBP/GIF) or video (MP4/WebM) the browser can play. */
   src: string;
 };
 
-/**
- * Two nested responsibilities, split across two DOM layers:
- *
- *   MediaLayer            (root, opacity 1, no background)
- *   └── ClipWindow        (clip-path only — the hand-made window)
- *       └── MediaContent   (full-frame, untransformed — object-fit: cover)
- *           └── <img> / <video>
- *
- * The clip and the transform must never share an element (CSS transform
- * applies to the element *including* its clip). For now the content has no
- * transform at all — the media stays full-frame behind the window. Region
- * mapping (zoom/pan) is disabled.
- *
- * Visibility is controlled by clip-path: `inset(50%)` (zero-area) when
- * inactive, the hand-made polygon when active. No opacity toggling — the
- * camera is always visible through transparent areas.
- */
 export function MediaLayer({ subscribe, src }: MediaLayerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const clipRef = useRef<HTMLDivElement | null>(null);
-  const mediaRef = useRef<HTMLVideoElement | null>(null);
-  const [isVideo, setIsVideo] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
-    setIsVideo(/\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(src));
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      imgRef.current = img;
+      setLoaded(true);
+    };
+    img.src = src;
   }, [src]);
 
   useEffect(() => {
-    if (!isVideo) return;
-    const video = mediaRef.current;
-    if (!video) return;
-    video.play().catch((error) => {
-      // Autoplay can be blocked until a user gesture; the video stays paused
-      // on its first frame, which is still a valid poster.
-      console.warn("[MediaLayer] video autoplay blocked", error);
-    });
-  }, [isVideo, src]);
-
-  useEffect(() => {
-    const off = subscribe((snapshot) => {
-      const root = rootRef.current;
+    if (!loaded) return;
+    const off = subscribe((snapshot: Snapshot) => {
       const clip = clipRef.current;
-      if (!root || !clip) return;
+      const canvas = canvasRef.current;
+      const img = imgRef.current;
+      if (!clip || !canvas || !img) return;
 
-      const { windowCorners, videoWidth, videoHeight, frameActive } =
+      const { windowCorners, videoWidth, videoHeight, frameActive, lipDeformation } =
         snapshot;
 
-      // Visibility is controlled by clip-path: when the frame is inactive we
-      // shrink the clip to a zero-area shape so the media is invisible but the
-      // element stays mounted. The camera behind is always visible.
       if (windowCorners.length === 4 && frameActive) {
         clip.style.clipPath = `polygon(${clipPathPolygon(
           windowCorners,
@@ -68,28 +46,70 @@ export function MediaLayer({ subscribe, src }: MediaLayerProps) {
       } else {
         clip.style.clipPath = "inset(50%)";
       }
+
+      const rect = clip.getBoundingClientRect();
+      const cw = Math.round(rect.width);
+      const ch = Math.round(rect.height);
+      if (cw === 0 || ch === 0) return;
+
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+      }
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.clearRect(0, 0, cw, ch);
+
+      const iw = img.naturalWidth || 1;
+      const ih = img.naturalHeight || 1;
+      const cover = Math.max(cw / iw, ch / ih);
+      const drawW = iw * cover;
+      const drawH = ih * cover;
+      const ox = (cw - drawW) / 2;
+      const oy = (ch - drawH) / 2;
+      ctx.drawImage(img, ox, oy, drawW, drawH);
+
+      if (!lipDeformation || !lipDeformation.deformedContour || lipDeformation.deformedContour.length < 3) {
+        return;
+      }
+
+      const restContour = lipDeformation.deformedContour;
+
+      const toCanvasX = (nx: number) => {
+        const mx = MIRROR_PREVIEW ? 1 - nx : nx;
+        return ox + mx * drawW;
+      };
+      const toCanvasY = (ny: number) => oy + ny * drawH;
+
+      const pts = restContour.map((p) => ({
+        x: toCanvasX(p.x),
+        y: toCanvasY(p.y),
+      }));
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.closePath();
+
+      ctx.fillStyle = "rgba(229, 62, 62, 0.55)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(197, 48, 48, 0.4)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
     });
     return off;
-  }, [subscribe]);
+  }, [subscribe, loaded]);
 
   return (
     <div ref={rootRef} className="media-layer" aria-hidden="true">
       <div ref={clipRef} className="media-layer__clip">
-        <div className="media-layer__content">
-          {isVideo ? (
-            <video
-              ref={mediaRef}
-              className="media-layer__media"
-              src={src}
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
-          ) : (
-            <img className="media-layer__media" src={src} alt="" />
-          )}
-        </div>
+        <canvas ref={canvasRef} className="media-layer__canvas" />
       </div>
     </div>
   );
