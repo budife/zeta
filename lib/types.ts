@@ -8,6 +8,7 @@
  */
 
 import type { RegionKind } from "./regions";
+import type { LipDeformationResult } from "./lipDeformation";
 
 /** A point in video-pixel space. */
 export type Point = { x: number; y: number };
@@ -123,4 +124,6 @@ export type Snapshot = {
   reason: string;
   videoWidth: number;
   videoHeight: number;
+  /** Lip deformation data for the rubber-lip effect, null when no face. */
+  lipDeformation: LipDeformationResult | null;
 };
