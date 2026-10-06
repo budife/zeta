@@ -5,7 +5,6 @@ import { CameraView } from "@/components/CameraView";
 import { DebugOverlay } from "@/components/DebugOverlay";
 import { HandFrame } from "@/components/HandFrame";
 import { MediaLayer } from "@/components/MediaLayer";
-import { TemplateCropPreview } from "@/components/TemplateCropPreview";
 import { StatusPanel } from "@/components/StatusPanel";
 import { useHandFrameEngine } from "@/hooks/useHandFrameEngine";
 
@@ -131,16 +130,11 @@ export default function HomePage() {
 
         {cameraReady && (
           <>
-            <div className="media-controls" style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-                <div className="media-controls">
-                  <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleUpload} style={{ display: "none" }} />
-                  <button type="button" className="ghost-button" onClick={() => fileInputRef.current?.click()}>Upload Media</button>
-                  {media !== DEFAULT_MEDIA && <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>}
-                  <span className="media-controls__name">{media === DEFAULT_MEDIA ? "template.svg" : "uploaded"}</span>
-                </div>
-              </div>
-              <TemplateCropPreview subscribe={subscribeSnapshot} />
+            <div className="media-controls">
+              <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleUpload} style={{ display: "none" }} />
+              <button type="button" className="ghost-button" onClick={() => fileInputRef.current?.click()}>Upload Media</button>
+              {media !== DEFAULT_MEDIA && <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>}
+              <span className="media-controls__name">{media === DEFAULT_MEDIA ? "template.svg" : "uploaded"}</span>
             </div>
             <button type="button" className="ghost-button" onClick={handleStop}>Stop Camera</button>
           </>

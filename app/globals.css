@@ -329,42 +329,6 @@ button {
   user-select: none;
 }
 
-/* --------------------------------------------------------- crop preview */
-
-.crop-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.crop-preview__label {
-  font-family: var(--mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-  text-transform: uppercase;
-}
-
-.crop-preview__viewport {
-  position: relative;
-  width: 240px;
-  height: 135px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  border: 1px solid var(--stroke);
-  background: #05060a;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.crop-preview__img {
-  position: absolute;
-  display: block;
-  user-select: none;
-  pointer-events: none;
-  /* left/top/width/height are driven per frame from the crop box. */
-}
-
 /* ----------------------------------------------------------------- controls */
 
 .controls {
