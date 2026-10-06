@@ -123,24 +123,84 @@ export function displayToSourceVideo(
   stageWidth: number,
   stageHeight: number
 ): { x: number; y: number } {
-  // Reverse mirror to get the source-x.
   const unmirroredX = MIRROR_PREVIEW ? 1 - displayX : displayX;
-
   const px = unmirroredX * stageWidth;
   const py = displayY * stageHeight;
-
-  // object-fit: cover scales the source to fill the stage, then centers it.
   const cover = Math.max(stageWidth / videoWidth, stageHeight / videoHeight);
   const renderedW = videoWidth * cover;
   const renderedH = videoHeight * cover;
   const offsetX = (stageWidth - renderedW) / 2;
   const offsetY = (stageHeight - renderedH) / 2;
-
   const sourceX = (px - offsetX) / cover;
   const sourceY = (py - offsetY) / cover;
-
   return {
     x: Math.round(Math.max(0, Math.min(videoWidth, sourceX))),
     y: Math.round(Math.max(0, Math.min(videoHeight, sourceY))),
+  };
+}
+
+/**
+ * Given the four window corners (in video-pixel space, already from mirrorX),
+ * compute the bounding box in template viewBox coordinates.
+ *
+ * The template is rendered with object-fit: cover on the same stage as the
+ * camera, so the same cover math applies with the template's natural size
+ * (1100×620).
+ *
+ * Returns { x, y, width, height } in template viewBox pixels, or null if the
+ * corners are invalid.
+ */
+export function windowToTemplateBox(
+  corners: Point[],
+  videoWidth: number,
+  videoHeight: number,
+  templateW: number,
+  templateH: number
+): { x: number; y: number; width: number; height: number } | null {
+  if (corners.length !== 4) return null;
+
+  // Corners are in video-pixel space, already mirrored (mirrorX applied).
+  // Find the axis-aligned bounding box of the corners in video space.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of corners) {
+    minX = Math.min(minX, c.x);
+    minY = Math.min(minY, c.y);
+    maxX = Math.max(maxX, c.x);
+    maxY = Math.max(maxY, c.y);
+  }
+
+  // Convert video-pixel coords to fractional [0..1] of the video.
+  // At this point the X is already mirrored (mirrorX applied), so we DON'T
+  // mirror again — the fraction is in mirrored display space.
+  const fracX = minX / videoWidth;
+  const fracY = minY / videoHeight;
+  const fracW = (maxX - minX) / videoWidth;
+  const fracH = (maxY - minY) / videoHeight;
+
+  // These fractions are in display space (mirrored). Map to template source
+  // using the same object-fit: cover math.
+  // Treat the stage dimensions as equal to the video for this calculation:
+  // the fractions are relative to the stage which matches the video aspect.
+  const stageW = videoWidth;
+  const stageH = videoHeight;
+
+  const cover = Math.max(stageW / templateW, stageH / templateH);
+  const renderedW = templateW * cover;
+  const renderedH = templateH * cover;
+  const offsetX = (stageW - renderedW) / 2;
+  const offsetY = (stageH - renderedH) / 2;
+
+  // Map the display rect back to template source pixels.
+  // Note: display X is already mirrored, so source X is just (displayPx - offset) / cover.
+  const sx = (fracX * stageW - offsetX) / cover;
+  const sy = (fracY * stageH - offsetY) / cover;
+  const sw = (fracW * stageW) / cover;
+  const sh = (fracH * stageH) / cover;
+
+  return {
+    x: Math.round(Math.max(0, sx)),
+    y: Math.round(Math.max(0, sy)),
+    width: Math.round(Math.min(templateW - Math.max(0, sx), sw)),
+    height: Math.round(Math.min(templateH - Math.max(0, sy), sh)),
   };
 }

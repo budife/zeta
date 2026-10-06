@@ -5,7 +5,7 @@
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { CornerSmoother, RectSmoother, normalizeAngle } from "../lib/smoothing";
-import { clipPathPolygon, MIRROR_PREVIEW } from "../lib/stage";
+import { clipPathPolygon, MIRROR_PREVIEW, windowToTemplateBox } from "../lib/stage";
 import {
   advanceRegion,
   classifyRegion,
@@ -492,6 +492,99 @@ console.log("\n[18] selection state machine");
   s2 = advanceSelection(s2.state, valid);
   check("recaptured during releasing -> locked", s2.state.phase === "locked", `${s2.state.phase}`);
   check("not deactivated", !s2.deactivated, `${s2.deactivated}`);
+}
+
+console.log("\n[19] window -> template crop box");
+
+{
+  const TW = 1100, TH = 620;
+
+  // Invalid input.
+  check(
+    "fewer than 4 corners -> null",
+    windowToTemplateBox([], 640, 480, TW, TH) === null
+  );
+
+  // Video 640x480, template 1100x620.
+  // cover = max(640/1100, 480/620) = max(0.5818, 0.7742) = 0.7742
+  // rendered = 1100*0.7742 x 620*0.7742 = 851.6 x 480
+  // offsetX = (640 - 851.6)/2 = -105.8, offsetY = 0
+  // Center box in video: 160..480 x 120..360
+  // sx = (160 - (-105.8)) / 0.7742 = 343.3
+  // sy = (120 - 0) / 0.7742 = 155.0
+  // sw = 320 / 0.7742 = 413.3, sh = 240 / 0.7742 = 310.0
+  const center = windowToTemplateBox(
+    [
+      { x: 160, y: 120 },
+      { x: 480, y: 120 },
+      { x: 480, y: 360 },
+      { x: 160, y: 360 },
+    ],
+    640,
+    480,
+    TW,
+    TH
+  )!;
+  check("center box has positive size", center.width > 0 && center.height > 0);
+  check(
+    `center box x ~343 (got ${center.x})`,
+    Math.abs(center.x - 343) <= 2
+  );
+  check(
+    `center box y ~155 (got ${center.y})`,
+    Math.abs(center.y - 155) <= 2
+  );
+  check(
+    `center box width ~413 (got ${center.width})`,
+    Math.abs(center.width - 413) <= 2
+  );
+  check(
+    `center box height ~310 (got ${center.height})`,
+    Math.abs(center.height - 310) <= 2
+  );
+
+  // Full-video corners map to a box clamped inside the template.
+  const full = windowToTemplateBox(
+    [
+      { x: 0, y: 0 },
+      { x: 640, y: 0 },
+      { x: 640, y: 480 },
+      { x: 0, y: 480 },
+    ],
+    640,
+    480,
+    TW,
+    TH
+  )!;
+  check(
+    "full-video box fits inside template",
+    full.x >= 0 && full.y >= 0 && full.x + full.width <= TW && full.y + full.height <= TH
+  );
+  // Template is wider than the video aspect, so the video's full width maps
+  // to a centered horizontal slice: x = (0 - offsetX)/cover = 105.8/0.7742 ~ 137.
+  check(
+    `full-video box x centered (got ${full.x})`,
+    Math.abs(full.x - 137) <= 2
+  );
+  check(
+    `full-video box y = 0 (got ${full.y})`,
+    full.y === 0
+  );
+
+  // Tiny window stays non-degenerate.
+  const tiny = windowToTemplateBox(
+    [
+      { x: 319, y: 239 },
+      { x: 321, y: 239 },
+      { x: 321, y: 241 },
+      { x: 319, y: 241 },
+    ],
+    640,
+    480,
+    TW,
+    TH
+  )!;
+  check("tiny window -> positive size", tiny.width > 0 && tiny.height > 0);
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);
