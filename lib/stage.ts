@@ -1,3 +1,4 @@
+import type { Similarity } from "./faceAlignment";
 import type { Box, FrameRect, Point, VectorTransform } from "./types";
 
 /**
@@ -203,4 +204,41 @@ export function windowToTemplateBox(
     width: Math.round(Math.min(templateW - Math.max(0, sx), sw)),
     height: Math.round(Math.min(templateH - Math.max(0, sy), sh)),
   };
+}
+
+/** A CSS 2D matrix: `x' = a·x + c·y + e`, `y' = b·x + d·y + f`. */
+export type CssMatrix = { a: number; b: number; c: number; d: number; e: number; f: number };
+
+/**
+ * Composes the selfie mirror with a face-alignment similarity into the single
+ * CSS matrix the media layer applies with `transform-origin: 0 0`.
+ *
+ * Derivation — the stage is sized to the video's aspect ratio (app/page.tsx),
+ * so video pixels and stage pixels differ only by the uniform scale
+ * `k = stageWidth / videoWidth`, and the object-fit: cover offset is zero:
+ *
+ *   similarity S in video px → stage px
+ *     x1 = a·x + c·y + e,   y1 = b·x + d·y + f     (e,f already × k)
+ *   horizontal mirror M about the stage centre
+ *     x2 = stageWidth − x1, y2 = y1
+ *
+ *   composed  (a,b,c,d,e,f) = (−a, b, −c, d, stageWidth − e, f)
+ */
+export function mediaMatrix(
+  align: Similarity | null,
+  videoWidth: number,
+  stageWidth: number
+): CssMatrix {
+  const s = align ? align.scale : 1;
+  const rot = align ? align.rotation : 0;
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const a = s * cos;
+  const b = s * sin;
+  const c = -s * sin;
+  const d = s * cos;
+  const k = videoWidth > 0 ? stageWidth / videoWidth : 1;
+  const e = (align ? align.tx : 0) * k;
+  const f = (align ? align.ty : 0) * k;
+  return { a: -a, b, c: -c, d, e: stageWidth - e, f };
 }

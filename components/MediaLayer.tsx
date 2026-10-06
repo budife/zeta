@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { clipPathPolygon } from "@/lib/stage";
+import { clipPathPolygon, mediaMatrix } from "@/lib/stage";
 import type { Snapshot } from "@/lib/types";
 
 export type MediaLayerProps = {
@@ -71,30 +71,16 @@ export function MediaLayer({ subscribe, src, faceAlignEnabled = true }: MediaLay
       }
 
       // ---- media transform (this element is never clipped) ----
-      // Matrix = mirror ∘ similarity. With transform-origin at (0,0):
-      //   S: x' = a·x + c·y + e   (similarity in stage px)
-      //   M: x''= -x' + stageW    (horizontal mirror about the center)
-      // Composed: a'=-a, b'=-b, c'=-c, d'=-d, e'=stageW-e, f'=f.
+      // Mirror ∘ face-alignment, composed into one matrix in lib/stage.ts so
+      // the math is unit-testable and cannot drift from the spec.
       const stageW = clip.clientWidth;
       if (stageW === 0 || videoWidth <= 0) return;
-      const k = stageW / videoWidth; // stage px per video px (aspect matches)
 
       const align = faceAlignEnabled && faceAlign ? faceAlign : null;
-      const s = align ? align.scale : 1;
-      const rot = align ? align.rotation : 0;
-      const cos = Math.cos(rot);
-      const sin = Math.sin(rot);
-      const a = s * cos;
-      const b = s * sin;
-      const c = -s * sin;
-      const d = s * cos;
-      const e = (align ? align.tx : 0) * k;
-      const f = (align ? align.ty : 0) * k;
+      const m = mediaMatrix(align, videoWidth, stageW);
 
       content.style.transformOrigin = "0 0";
-      content.style.transform = `matrix(${-a}, ${-b}, ${-c}, ${-d}, ${
-        stageW - e
-      }, ${f})`;
+      content.style.transform = `matrix(${m.a}, ${m.b}, ${m.c}, ${m.d}, ${m.e}, ${m.f})`;
     });
     return off;
   }, [subscribe, faceAlignEnabled]);

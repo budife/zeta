@@ -5,7 +5,7 @@
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { CornerSmoother, RectSmoother, normalizeAngle } from "../lib/smoothing";
-import { clipPathPolygon, MIRROR_PREVIEW, windowToTemplateBox } from "../lib/stage";
+import { clipPathPolygon, mediaMatrix, MIRROR_PREVIEW, windowToTemplateBox } from "../lib/stage";
 import {
   advanceRegion,
   classifyRegion,
@@ -768,6 +768,51 @@ console.log("\n[22] face alignment (similarity solve)");
   const aligned = faceAlignment(fp, W, H);
   check("aligned scale finite > 0", Number.isFinite(aligned.scale) && aligned.scale > 0, `${aligned.scale}`);
   check("aligned rotation finite", Number.isFinite(aligned.rotation));
+}
+
+console.log("\n[23] media matrix = mirror o similarity (not a 180 rotation)");
+{
+  const near = (m, x, y, wantX, wantY, tol = 1e-6) =>
+    Math.abs(m.a * x + m.c * y + m.e - wantX) < tol &&
+    Math.abs(m.b * x + m.d * y + m.f - wantY) < tol;
+
+  // Identity alignment: the matrix must be a pure horizontal reflection,
+  // x -> stageW - x and y -> y. A 180 degree rotation maps y -> -y, which
+  // throws the whole image off the top of the stage (it renders invisible)
+  // and looks upside down when part of it is still on screen.
+  {
+    const m = mediaMatrix(null, 1280, 1280);
+    check("identity mirrors x", near(m, 0, 0, 1280, 0) && near(m, 200, 300, 1080, 300));
+    check("identity keeps y sign", near(m, 0, 720, 1280, 720) && near(m, 40, 700, 1240, 700));
+  }
+
+  // Rotation + translation: the result must be M(S(p)) — the mirror applied
+  // AFTER the similarity, with only the X row negated.
+  {
+    const s = 2;
+    const align = { scale: s, rotation: 0, tx: 0, ty: -100 };
+    // S(200,300) = (400, 500) -> mirrored x = 1280 - 400 = 880
+    const m = mediaMatrix(align, 1280, 1280);
+    check("scale+translate, then mirror", near(m, 200, 300, 880, 500));
+  }
+
+  {
+    // 90 degrees: S(x,y) = (100 - y, x + 50); mirror x about 1000.
+    const align = { scale: 1, rotation: Math.PI / 2, tx: 100, ty: 50 };
+    const m = mediaMatrix(align, 1000, 1000);
+    // S(300,200) = (-100, 350) -> mirrored x = 1000 - (-100) = 1100
+    check("rotation, then mirror", near(m, 300, 200, 1100, 350));
+    // S(0,0) = (100, 50) -> mirrored x = 900
+    check("rotation about origin", near(m, 0, 0, 900, 50));
+  }
+
+  // Translation is in video px and must be scaled to stage px.
+  {
+    const align = { scale: 1, rotation: 0, tx: 10, ty: 10 };
+    const m = mediaMatrix(align, 640, 1280); // k = 2
+    // S(0,0) = (20, 20) -> mirrored x = 1280 - 20 = 1260
+    check("video px translation scaled to stage px", near(m, 0, 0, 1260, 20));
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);
