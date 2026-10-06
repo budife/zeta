@@ -6,6 +6,7 @@ import { normalizedToVideo, toStagePixels } from "@/lib/stage";
 import { HAND_LANDMARK } from "@/lib/geometry";
 import { HandTracker } from "./HandTracker";
 import { FaceTracker } from "./FaceTracker";
+import { PoseTracker } from "./PoseTracker";
 import { RegionTracker } from "./RegionTracker";
 import { templateRegionFor } from "@/lib/templateRegions";
 
@@ -73,6 +74,7 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
 
   return (
     <>
+      <PoseTracker subscribe={subscribe} enabled={enabled} />
       <HandTracker subscribe={subscribe} enabled={enabled} />
       <FaceTracker subscribe={subscribe} enabled={enabled} />
       <RegionTracker subscribe={subscribe} enabled={enabled} />

@@ -21,6 +21,8 @@ import {
   classifyRegion,
   coarseRegion,
   regionBox,
+  POSE_CONNECTIONS,
+  POSE_LANDMARK,
   INITIAL_REGION_LOCK,
   type ClassificationResult,
   type NormBox,
@@ -1003,6 +1005,50 @@ console.log("\n[26] corner feed plan — smooth while forming, hold, then clear"
   const live = planCornerFrame(FORMING_HOLD_FRAMES + 10, false, true);
   check("live selection never clears", live.clear === false);
   check("live selection still counts", live.held === FORMING_HOLD_FRAMES + 11);
+}
+
+console.log("\n[27] pose skeleton topology — all 33 joints connected");
+{
+  const seen = new Set<number>();
+  let inRange = true;
+  let noSelfLoop = true;
+  for (const [a, b] of POSE_CONNECTIONS) {
+    if (a < 0 || a > 32 || b < 0 || b > 32) inRange = false;
+    if (a === b) noSelfLoop = false;
+    seen.add(a);
+    seen.add(b);
+  }
+  check("all indices within the 33-point model", inRange);
+  check("no self loops", noSelfLoop);
+
+  // A joint that appears in no bone is invisible in the debug skeleton —
+  // that would quietly drop the very body part the operator is checking.
+  const orphans = Array.from({ length: 33 }, (_, i) => i).filter((i) => !seen.has(i));
+  check("no orphan joints", orphans.length === 0, `orphans: ${orphans.join(",")}`);
+
+  // The joints called out for full-body tracking must all be reachable.
+  const required = [
+    POSE_LANDMARK.nose,
+    POSE_LANDMARK.leftShoulder,
+    POSE_LANDMARK.rightShoulder,
+    POSE_LANDMARK.leftElbow,
+    POSE_LANDMARK.rightElbow,
+    POSE_LANDMARK.leftWrist,
+    POSE_LANDMARK.rightWrist,
+    POSE_LANDMARK.leftHip,
+    POSE_LANDMARK.rightHip,
+    POSE_LANDMARK.leftKnee,
+    POSE_LANDMARK.rightKnee,
+    POSE_LANDMARK.leftAnkle,
+    POSE_LANDMARK.rightAnkle,
+    POSE_LANDMARK.leftFootIndex,
+    POSE_LANDMARK.rightFootIndex,
+  ];
+  check(
+    "nose, arms, hips, knees, ankles and feet are wired in",
+    required.every((i) => seen.has(i)),
+    `missing: ${required.filter((i) => !seen.has(i)).join(",")}`
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

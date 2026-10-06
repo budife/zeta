@@ -466,15 +466,21 @@ export class HandFrameEngine {
     // The media is visible whenever the frame is active — the frame is the
     // trigger, not the face. Face detection stays as a secondary indicator.
 
-    // ---------------------------------------------- region classification
+    // ------------------------------------------------------- full-body pose
+    // Runs on EVERY frame the camera produces. Full-body tracking must not
+    // depend on the face tracker or on the selection being active: the 33
+    // pose landmarks are available from the first frame, so the debug
+    // skeleton draws before any window is ever formed. Region classification
+    // below is the only thing that needs a selection.
     let poseLandmarksThisFrame: import("./types").NormalizedLandmark[] = [];
+    if (this.poseLandmarker) {
+      const poseResult = this.poseLandmarker.detectForVideo(video, timestamp);
+      poseLandmarksThisFrame = poseResult.landmarks?.[0] ?? [];
+    }
+
+    // ---------------------------------------------- region classification
     let regionScoresThisFrame: ClassificationResult["scores"] = [];
     if (active && frame) {
-      if (this.poseLandmarker) {
-        const poseResult = this.poseLandmarker.detectForVideo(video, timestamp);
-        poseLandmarksThisFrame = poseResult.landmarks?.[0] ?? [];
-      }
-
       // The window the hands enclose, in normalized coordinates — the same
       // space the pose/face landmarks live in, so no hardcoded screen coords.
       const selection = quadToNormBox(windowCorners, width, height);

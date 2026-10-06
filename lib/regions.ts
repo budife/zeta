@@ -79,6 +79,27 @@ export const POSE_LANDMARK = {
   rightFootIndex: 32,
 } as const;
 
+/**
+ * MediaPipe Pose topology — the bones of the 33-point skeleton, used by the
+ * debug overlay to draw a full body instead of a cloud of dots.
+ * https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
+ */
+export const POSE_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
+  // face
+  [0, 1], [1, 2], [2, 3], [3, 7],
+  [0, 4], [4, 5], [5, 6], [6, 8],
+  [9, 10],
+  // torso
+  [11, 12], [11, 23], [12, 24], [23, 24],
+  // arms
+  [11, 13], [13, 15], [12, 14], [14, 16],
+  [15, 17], [17, 19], [19, 21],
+  [16, 18], [18, 20], [20, 22],
+  // legs
+  [23, 25], [25, 27], [27, 29], [27, 31],
+  [24, 26], [26, 28], [28, 30], [28, 32],
+];
+
 /** Face Landmarker indices that carve the face into stable sub-regions. */
 export const FACE_LANDMARK = {
   leftEyeCenter: 468,

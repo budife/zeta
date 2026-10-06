@@ -22,13 +22,13 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
       const { region, poseLandmarks, faceLandmarks, videoWidth, videoHeight } = snapshot;
       const kind: RegionKind | null = region.kind;
 
-      // `resolveRegionBox` works in normalized [0..1]; placeBox takes video
+      const resolved =
+        kind === null ? null : resolveRegion(kind, poseLandmarks, faceLandmarks);
+      const box = resolved?.box ?? null;
+
+      // `resolveRegion` works in normalized [0..1]; placeBox takes video
       // pixels. Convert explicitly — passing the NormBox straight through
       // collapsed the box to the top-left corner at zero size.
-      const box =
-        kind === null
-          ? null
-          : resolveRegionBox(kind, poseLandmarks, faceLandmarks);
       const videoBox = box ? normBoxToVideo(box, videoWidth, videoHeight) : null;
 
       if (boxRef.current) {
@@ -60,12 +60,14 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
         canvas.height = height;
       }
       ctx.clearRect(0, 0, width, height);
-      if (poseLandmarks.length === 0) return;
+      // Only the landmarks that actually drove this classification — the full
+      // 33-point skeleton is PoseTracker's job, and drawing both would make it
+      // impossible to tell which points won.
+      const points = resolved?.points ?? [];
+      if (points.length === 0) return;
 
-      // Pose skeleton points for the active region so the operator can see
-      // exactly which landmarks drove the classification.
-      ctx.fillStyle = "rgba(52, 211, 153, 0.9)";
-      for (const lm of poseLandmarks) {
+      ctx.fillStyle = "rgba(52, 211, 153, 0.95)";
+      for (const lm of points) {
         const p = toStagePixels(
           normalizedToVideo(lm, videoWidth, videoHeight),
           videoWidth,
@@ -74,7 +76,7 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
           height
         );
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, 3.4, 0, Math.PI * 2);
         ctx.fill();
       }
     });
@@ -91,8 +93,14 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
   );
 }
 
-/** Region bounds come from pose landmarks for body parts, face mesh for eyes/face. */
-function resolveRegionBox(
+/**
+ * Resolved region: its bounds plus the exact landmarks that produced them.
+ *
+ * Region bounds come from pose landmarks for body parts and from the face mesh
+ * for eyes/face. Both are returned in normalized [0..1] coordinates, matching
+ * what `regionBox` works in.
+ */
+function resolveRegion(
   kind: RegionKind,
   poseLandmarks: Snapshot["poseLandmarks"],
   faceLandmarks: Snapshot["faceLandmarks"]
@@ -100,11 +108,21 @@ function resolveRegionBox(
   const poseDef = POSE_REGIONS.find((r) => r.kind === kind);
   if (poseDef && poseLandmarks.length > 0) {
     const box = regionBox(poseLandmarks, poseDef.indices);
-    if (box) return box;
+    if (box) return { box, points: pick(poseLandmarks, poseDef.indices) };
   }
   const faceDef = FACE_REGIONS.find((r) => r.kind === kind);
   if (faceDef && faceLandmarks.length > 0) {
-    return regionBox(faceLandmarks, faceDef.indices);
+    const box = regionBox(faceLandmarks, faceDef.indices);
+    if (box) return { box, points: pick(faceLandmarks, faceDef.indices) };
   }
-  return null;
+  return { box: null, points: [] };
+}
+
+function pick(landmarks: Snapshot["poseLandmarks"], indices: number[]) {
+  const out = [];
+  for (const i of indices) {
+    const lm = landmarks[i];
+    if (lm) out.push(lm);
+  }
+  return out;
 }
