@@ -107,8 +107,9 @@ export default function HomePage() {
             <MediaLayer
               subscribe={subscribeSnapshot}
               src={media}
+              faceAlignEnabled={media === DEFAULT_MEDIA}
             />
-            <HandFrame subscribe={subscribeSnapshot} active={frameActive} />
+            <HandFrame subscribe={subscribeSnapshot} active={frameActive} debug={debug} />
             <DebugOverlay subscribe={subscribeSnapshot} enabled={debug} />
           </>
         )}

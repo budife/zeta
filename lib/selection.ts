@@ -41,6 +41,12 @@ export type SelectionState = {
 export const SELECTION_CONFIG = {
   /** Valid frames required to go CANDIDATE → LOCKED. */
   candidateFrames: 2,
+  /**
+   * Failed frames tolerated during CANDIDATE before starting over. One bad
+   * detection frame while the hands are still settling must not throw the
+   * whole acquisition away (that made the window flicker on and off).
+   */
+  candidateGraceFrames: 3,
   /** Consecutive failed frames required to leave LOCKED for RELEASING. */
   releaseFrames: 4,
   /** Frames the RELEASING tail lasts before dropping back to SEARCHING. */
@@ -119,8 +125,13 @@ export function advanceSelection(
               }
             : { ...state, validStreak, invalidStreak: 0, dropoutStreak: 0 };
       } else {
-        // One bad frame before locking is enough to start over.
-        next = { ...INITIAL_SELECTION };
+        // A frame or two of noise while the hands settle must not throw the
+        // acquisition away — only sustained failure does.
+        const invalidStreak = state.invalidStreak + 1;
+        next =
+          invalidStreak >= SELECTION_CONFIG.candidateGraceFrames
+            ? { ...INITIAL_SELECTION }
+            : { ...state, invalidStreak };
       }
       break;
     }

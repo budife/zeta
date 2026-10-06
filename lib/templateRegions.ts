@@ -27,6 +27,26 @@ export type TemplateRegionBox = {
 
 export const TEMPLATE_VIEWBOX = { width: 1100, height: 620 } as const;
 
+/**
+ * Face feature anchors inside the template artwork, in viewBox units.
+ *
+ * Used for face-to-template alignment: when the selection captures the user's
+ * face, these four points are mapped onto the user's four face points (eye
+ * centers, nose tip, mouth center), and the whole media is transformed so the
+ * template's face tracks the user's face.
+ *
+ * **Tune these to your artwork** — they are first estimates for the bundled
+ * placeholder (the face sits in the `face`/`eyes` region boxes above).
+ */
+export const TEMPLATE_FACE_POINTS = {
+  /** Viewers-left eye center (template's right eye). */
+  leftEye: { x: 440, y: 210 },
+  /** Viewers-right eye center. */
+  rightEye: { x: 660, y: 210 },
+  nose: { x: 550, y: 300 },
+  mouth: { x: 550, y: 420 },
+} as const;
+
 export const TEMPLATE_REGIONS: Partial<Record<RegionKind, TemplateRegionBox>> = {
   // The head occupies the upper third of the placeholder art.
   eyes: { x: 330, y: 150, width: 440, height: 120 },

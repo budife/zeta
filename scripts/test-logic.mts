@@ -19,10 +19,17 @@ import {
 import {
   advanceSelection,
   INITIAL_SELECTION,
+  SELECTION_CONFIG,
 } from "../lib/selection";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
 import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
+import {
+  solveSimilarity,
+  applySimilarity,
+  userFacePoints,
+  faceAlignment,
+} from "../lib/faceAlignment";
 
 const W = 1280;
 const H = 720;
@@ -91,18 +98,28 @@ console.log("\n[1] valid hand frame from two L-gestures");
   }
 }
 
-console.log("\n[2] open palm (no curled fingers) is rejected");
+console.log("\n[2] open palm is accepted — only thumb+index spread matters");
 {
   const a = hand({ x: 340, y: 200 }, { x: 600, y: 200 });
   const b = hand({ x: 940, y: 520 }, { x: 680, y: 520 });
   for (const h of [a, b]) {
+    // Spread middle/ring/pinky (open palm) — previously rejected, now fine.
     h[12] = { x: h[9].x + 60, y: h[9].y + 10, z: 0 };
     h[16] = { x: h[13].x + 60, y: h[13].y + 10, z: 0 };
     h[20] = { x: h[17].x + 60, y: h[17].y + 10, z: 0 };
   }
   const det = detectHandFrame([toNorm(a), toNorm(b)], W, H);
-  check("no corners from open palms", det.corners.length === 0, det.reason);
-  check("reason reports invalid gesture", det.reason === "gesture-invalid", det.reason);
+  check("open palms still give 4 corners", det.corners.length === 4, det.reason);
+}
+
+console.log("[2b] thumb+index too close on both hands is rejected");
+{
+  // Both tips nearly on top of each other → no usable corners.
+  const a = hand({ x: 400, y: 200 }, { x: 405, y: 202 });
+  const b = hand({ x: 900, y: 520 }, { x: 905, y: 518 });
+  const det = detectHandFrame([toNorm(a), toNorm(b)], W, H);
+  check("no corners when tips coincide", det.corners.length === 0, det.reason);
+  check("reason gesture-invalid", det.reason === "gesture-invalid", det.reason);
 }
 
 console.log("\n[3] single hand cannot form a frame");
@@ -585,6 +602,172 @@ console.log("\n[19] window -> template crop box");
     TH
   )!;
   check("tiny window -> positive size", tiny.width > 0 && tiny.height > 0);
+}
+
+console.log("\n[20] candidate tolerates short noise (TEST E)");
+
+{
+  const valid = { valid: true, hasCorners: true };
+  const invalid = { valid: false, hasCorners: false };
+
+  // Enter candidate with one valid frame.
+  let s = advanceSelection(INITIAL_SELECTION, valid);
+  check("in candidate", s.state.phase === "candidate", s.state.phase);
+
+  // A single bad frame must NOT reset the acquisition.
+  s = advanceSelection(s.state, invalid);
+  check(
+    "1 bad frame stays candidate",
+    s.state.phase === "candidate",
+    s.state.phase
+  );
+  s = advanceSelection(s.state, valid);
+  check("valid again -> still candidate/streak up", s.state.phase === "candidate" || s.state.phase === "locked", s.state.phase);
+  s = advanceSelection(s.state, valid);
+  check("locks after grace", s.state.phase === "locked", s.state.phase);
+
+  // Sustained failure during candidate still resets.
+  s = advanceSelection(INITIAL_SELECTION, valid);
+  for (let i = 0; i < SELECTION_CONFIG.candidateGraceFrames; i++) {
+    s = advanceSelection(s.state, invalid);
+  }
+  check(
+    "sustained failure during candidate -> searching",
+    s.state.phase === "searching",
+    s.state.phase
+  );
+
+  // TEST E: one frame of tracking dropout while locked keeps last corners
+  // (engine holds cornerSmoother.value — phase must stay locked).
+  s = advanceSelection(INITIAL_SELECTION, valid);
+  s = advanceSelection(s.state, valid);
+  check("locked", s.state.phase === "locked", s.state.phase);
+  s = advanceSelection(s.state, invalid);
+  check("single dropout -> still locked", s.state.phase === "locked", s.state.phase);
+}
+
+console.log("\n[21] trapezoid / tilted quads stay valid (TEST B/C/D)");
+
+{
+  // Trapezoid: top edge shorter than bottom, non-90° corners.
+  const trap = [
+    { x: 440, y: 160 },
+    { x: 840, y: 200 },
+    { x: 940, y: 560 },
+    { x: 340, y: 520 },
+  ];
+  const v1 = isValidQuad(trap, W, H);
+  check("trapezoid valid", v1.valid, v1.reason);
+
+  // Strongly tilted rectangle (~35°).
+  const ang = (35 * Math.PI) / 180;
+  const cx = 640, cy = 360;
+  const local = [
+    { x: -280, y: -170 }, { x: 280, y: -170 },
+    { x: 280, y: 170 }, { x: -280, y: 170 },
+  ];
+  const tilted = local.map((p) => ({
+    x: cx + p.x * Math.cos(ang) - p.y * Math.sin(ang),
+    y: cy + p.x * Math.sin(ang) + p.y * Math.cos(ang),
+  }));
+  const v2 = isValidQuad(tilted, W, H);
+  check("35° tilted quad valid", v2.valid, v2.reason);
+
+  // Asymmetric heights (left hand higher than right hand).
+  const asym = [
+    { x: 360, y: 80 },
+    { x: 920, y: 300 },
+    { x: 900, y: 640 },
+    { x: 380, y: 460 },
+  ];
+  const v3 = isValidQuad(asym, W, H);
+  check("asymmetric quad valid", v3.valid, v3.reason);
+
+  // Bowtie (crossed polygon) must still be rejected.
+  const bowtie = [
+    { x: 360, y: 160 },
+    { x: 920, y: 560 },
+    { x: 920, y: 160 },
+    { x: 360, y: 560 },
+  ];
+  const v4 = isValidQuad(bowtie, W, H);
+  check("bowtie rejected", !v4.valid, v4.reason);
+}
+
+console.log("\n[22] face alignment (similarity solve)");
+
+{
+  const src = [
+    { x: 100, y: 100 },
+    { x: 200, y: 100 },
+    { x: 150, y: 160 },
+    { x: 150, y: 220 },
+  ];
+
+  // Identity: target == source.
+  const id = solveSimilarity(src, src)!;
+  check("identity scale ~1", Math.abs(id.scale - 1) < 1e-6, `${id.scale}`);
+  check("identity rotation ~0", Math.abs(id.rotation) < 1e-6, `${id.rotation}`);
+  check("identity translation ~0", Math.abs(id.tx) < 1e-6 && Math.abs(id.ty) < 1e-6);
+
+  // Pure translation.
+  const moved = src.map((p) => ({ x: p.x + 40, y: p.y - 25 }));
+  const t = solveSimilarity(src, moved)!;
+  check("translation tx=40", Math.abs(t.tx - 40) < 1e-6, `${t.tx}`);
+  check("translation ty=-25", Math.abs(t.ty + 25) < 1e-6, `${t.ty}`);
+  check("translation keeps scale", Math.abs(t.scale - 1) < 1e-6);
+
+  // Rotation 30° around origin-ish + scale 2.
+  const theta = (30 * Math.PI) / 180;
+  const rt = { scale: 2, rotation: theta, tx: 10, ty: 20 };
+  const target = src.map((p) => applySimilarity(rt, p));
+  const solved = solveSimilarity(src, target)!;
+  check("solved scale ~2", Math.abs(solved.scale - 2) < 1e-6, `${solved.scale}`);
+  check("solved rotation ~30°", Math.abs(solved.rotation - theta) < 1e-6, `${solved.rotation}`);
+  check("solved tx ~10", Math.abs(solved.tx - 10) < 1e-6, `${solved.tx}`);
+  check("solved ty ~20", Math.abs(solved.ty - 20) < 1e-6, `${solved.ty}`);
+
+  // Roundtrip: applying solved to source reproduces target.
+  const p0 = applySimilarity(solved, src[2]);
+  check(
+    "roundtrip point",
+    Math.hypot(p0.x - target[2].x, p0.y - target[2].y) < 1e-6
+  );
+
+  // Degenerate inputs.
+  check("single point -> null", solveSimilarity([{ x: 0, y: 0 }], [{ x: 1, y: 1 }]) === null);
+  check("empty -> null", solveSimilarity([], []) === null);
+  check("coincident source -> null",
+    solveSimilarity(
+      [{ x: 5, y: 5 }, { x: 5, y: 5 }],
+      [{ x: 1, y: 1 }, { x: 2, y: 2 }]
+    ) === null
+  );
+
+  // userFacePoints from a synthetic 478-landmark set.
+  const lm: { x: number; y: number; z: number }[] = [];
+  for (let i = 0; i < 478; i++) lm.push({ x: 0, y: 0, z: 0 });
+  lm[33] = { x: 0.30, y: 0.40, z: 0 };
+  lm[133] = { x: 0.36, y: 0.40, z: 0 };
+  lm[263] = { x: 0.64, y: 0.41, z: 0 };
+  lm[362] = { x: 0.58, y: 0.41, z: 0 };
+  lm[4] = { x: 0.47, y: 0.55, z: 0 };
+  lm[61] = { x: 0.42, y: 0.68, z: 0 };
+  lm[291] = { x: 0.54, y: 0.68, z: 0 };
+  const fp = userFacePoints(lm)!;
+  check("left eye center", Math.abs(fp.leftEye.x - 0.33) < 1e-9 && Math.abs(fp.leftEye.y - 0.40) < 1e-9);
+  check("right eye center", Math.abs(fp.rightEye.x - 0.61) < 1e-9);
+  check("nose", Math.abs(fp.nose.x - 0.47) < 1e-9);
+  check("mouth center", Math.abs(fp.mouth.x - 0.48) < 1e-9 && Math.abs(fp.mouth.y - 0.68) < 1e-9);
+  check("missing landmarks -> null", userFacePoints(lm.slice(0, 100)) === null);
+  check("null -> null", userFacePoints(null) === null);
+
+  // faceAlignment: null user points -> identity; real points -> finite.
+  const ident = faceAlignment(null, W, H);
+  check("null user -> identity", ident.scale === 1 && ident.rotation === 0);
+  const aligned = faceAlignment(fp, W, H);
+  check("aligned scale finite > 0", Number.isFinite(aligned.scale) && aligned.scale > 0, `${aligned.scale}`);
+  check("aligned rotation finite", Number.isFinite(aligned.rotation));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

@@ -295,8 +295,11 @@ button {
  * DOM structure:
  *   .media-layer          (root)
  *   └── .media-layer__clip   (clip-path only — the hand-made window)
- *       └── .media-layer__content
+ *       └── .media-layer__content (transform only — mirror + face alignment)
  *           └── .media-layer__media  (img/video, object-fit: cover)
+ *
+ * The clip and the transform MUST stay on separate elements: transforming the
+ * clipped element would drag the window itself along.
  */
 .media-layer {
   position: absolute;
@@ -315,6 +318,12 @@ button {
 .media-layer__content {
   position: absolute;
   inset: 0;
+  /*
+   * JS composes mirror ∘ face-alignment into one matrix with
+   * transform-origin: 0 0 (see components/MediaLayer.tsx). The fallback
+   * below only renders before the first snapshot arrives — it must mirror
+   * about the CENTER to match, so it uses the default origin.
+   */
   transform: scaleX(-1);
 }
 

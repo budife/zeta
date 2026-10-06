@@ -7,16 +7,27 @@ import type { Snapshot } from "@/lib/types";
 export type HandFrameProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
   active: boolean;
+  /**
+   * Debug only: the fitted candidate rectangle and the blue outline polygon.
+   * In production the UI shows nothing but the four yellow fingertip dots.
+   */
+  debug?: boolean;
 };
 
 /**
- * Draws the hand-made selection. While the hands are still forming the frame,
- * a dashed "candidate" rectangle previews the fit. Once the frame validates,
- * the outline follows the ACTUAL quadrilateral the hands form (straight edges
- * between the four fingertips) rather than a fitted rectangle — the outline is
- * the visible edge of the clipping window, so it must match it exactly.
+ * Draws the hand-made selection.
+ *
+ * Production (debug off): exactly four yellow dots, one per fingertip corner
+ * (left thumb, left index, right thumb, right index). While the window is
+ * active the dots follow the smoothed corners the clip-path uses, so they sit
+ * on the visible edge of the window; before activation they show the raw
+ * detected corners as live feedback.
+ *
+ * Debug: additionally the fitted candidate rectangle (dashed) and the outline
+ * of the clipped quadrilateral. No dashed blue line is ever rendered in
+ * production.
  */
-export function HandFrame({ subscribe, active }: HandFrameProps) {
+export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) {
   const candidateRef = useRef<HTMLDivElement | null>(null);
   const outlineRef = useRef<SVGPolygonElement | null>(null);
   const cornerRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -25,9 +36,9 @@ export function HandFrame({ subscribe, active }: HandFrameProps) {
     const off = subscribe((snapshot) => {
       const { rawFrame, windowCorners, videoWidth, videoHeight, corners } = snapshot;
 
-      // Candidate: still the fitted rectangle, a rough preview while forming.
+      // Debug-only candidate: fitted rectangle preview while forming.
       if (candidateRef.current) {
-        if (rawFrame && !active) {
+        if (debug && rawFrame && !active) {
           Object.assign(
             candidateRef.current.style,
             placeFrame(rawFrame, videoWidth, videoHeight)
@@ -38,9 +49,9 @@ export function HandFrame({ subscribe, active }: HandFrameProps) {
         }
       }
 
-      // Active window: stroke the exact polygon the media is clipped to.
+      // Debug-only outline: stroke the exact polygon the media is clipped to.
       if (outlineRef.current) {
-        if (active && windowCorners.length === 4) {
+        if (debug && active && windowCorners.length === 4) {
           outlineRef.current.setAttribute(
             "points",
             windowCorners
@@ -57,9 +68,19 @@ export function HandFrame({ subscribe, active }: HandFrameProps) {
         }
       }
 
+      // Four fingertip dots — always rendered, never dashed, never blue.
+      // Active window: use the smoothed corners (exactly what the clip uses).
+      // While forming: show the raw detected corners as feedback.
+      const dotPoints = active
+        ? windowCorners.length === 4
+          ? windowCorners
+          : []
+        : corners.length === 4
+          ? corners
+          : [];
       cornerRefs.current.forEach((el, i) => {
         if (!el) return;
-        const corner = corners[i];
+        const corner = dotPoints[i];
         if (!corner) {
           el.style.opacity = "0";
           return;
@@ -71,7 +92,7 @@ export function HandFrame({ subscribe, active }: HandFrameProps) {
       });
     });
     return off;
-  }, [subscribe, active]);
+  }, [subscribe, active, debug]);
 
   return (
     <div className="hand-frame-layer" aria-hidden="true">

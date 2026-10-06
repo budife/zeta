@@ -17,23 +17,12 @@ import {
 } from "./geometry";
 
 /**
- * Hand Landmark indices for the four fingertips + their MCP joints.
- * MediaPipe hand model: 4 = thumb tip, 8 = index tip, 12 = middle tip,
- * 16 = ring tip, 20 = pinky tip.
- */
-const FINGERS = [
-  { tip: HAND_LANDMARK.middleTip, mcp: HAND_LANDMARK.middleMcp },
-  { tip: HAND_LANDMARK.ringTip, mcp: HAND_LANDMARK.ringMcp },
-  { tip: HAND_LANDMARK.pinkyTip, mcp: HAND_LANDMARK.pinkyMcp },
-];
-
-/**
- * Verdict for one hand: is it forming the "L" corner of a frame?
+ * Verdict for one hand: does it expose two usable corners?
  *
- * The frame gesture is one hand making an L: index extended, thumb extended
- * away from the index so the thumb tip and the index tip are two adjacent
- * corners of the frame. At least two of the other three fingers must stay
- * curled, which rejects open palms while staying easy to hold.
+ * Deliberately minimal: the only thing that matters is that the thumb tip and
+ * index tip are far enough apart (and the hand big enough) that the two points
+ * can serve as corners. No finger-curl rules, no "L" shape requirement, no
+ * rectangle condition — the four corners come straight from the landmarks.
  */
 function checkHandGesture(hand: Point[]): HandGestureVerdict {
   const palm = dist(hand[HAND_LANDMARK.wrist], hand[HAND_LANDMARK.middleMcp]);
@@ -41,25 +30,10 @@ function checkHandGesture(hand: Point[]): HandGestureVerdict {
     return { ok: false, reason: "hand-too-far" };
   }
 
-  const indexExt =
-    dist(hand[HAND_LANDMARK.indexTip], hand[HAND_LANDMARK.indexMcp]) / palm;
-  if (indexExt < FRAME_CONFIG.extendThreshold) {
-    return { ok: false, reason: "index-not-extended" };
-  }
-
   const separation =
     dist(hand[HAND_LANDMARK.thumbTip], hand[HAND_LANDMARK.indexTip]) / palm;
   if (separation < FRAME_CONFIG.minTipSeparation) {
     return { ok: false, reason: "fingers-not-spread" };
-  }
-
-  let curled = 0;
-  for (const finger of FINGERS) {
-    const extended = dist(hand[finger.tip], hand[finger.mcp]) / palm;
-    if (extended < FRAME_CONFIG.extendThreshold) curled += 1;
-  }
-  if (curled < FRAME_CONFIG.minCurledFingers) {
-    return { ok: false, reason: "fingers-not-curled" };
   }
 
   return { ok: true, reason: "ok" };

@@ -28,6 +28,11 @@ import {
   type ClassificationResult,
 } from "./regions";
 import { mapRegionTransform } from "./regionMapping";
+import {
+  faceAlignment,
+  userFacePoints,
+  IDENTITY_SIMILARITY,
+} from "./faceAlignment";
 import { MIRROR_PREVIEW } from "./stage";
 
 const WASM_PATH = "/mediapipe/wasm";
@@ -109,6 +114,14 @@ export class HandFrameEngine {
   private faceState: FaceState = "none";
   private lastFaceBox: Box | null = null;
   private lastFaceAt = 0;
+
+  /** Smoothed face→template alignment — see lib/faceAlignment.ts. */
+  private faceAlign: import("./faceAlignment").Similarity = {
+    scale: 1,
+    rotation: 0,
+    tx: 0,
+    ty: 0,
+  };
 
   /** Smoothed region classification — see REGION_LOCK in lib/regions.ts. */
   private regionLock: import("./regions").RegionLockState = {
@@ -374,6 +387,7 @@ export class HandFrameEngine {
       this.cornerSmoother.reset();
       this.lastFaceBox = null;
       this.faceState = "none";
+      this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     }
 
     let frame: FrameRect | null = null;
@@ -414,6 +428,23 @@ export class HandFrameEngine {
       } else {
         this.faceState = "none";
       }
+
+      // Face→template alignment: only while the selection captures the face.
+      // The result is smoothed (tau 0.15s) so the media glides instead of
+      // snapping when landmarks jitter.
+      const target = faceInFrame
+        ? faceAlignment(userFacePoints(landmarks ?? null), width, height)
+        : IDENTITY_SIMILARITY;
+      const alpha = smoothingAlpha(dt, 0.15);
+      const cur = this.faceAlign;
+      this.faceAlign = {
+        scale: cur.scale + (target.scale - cur.scale) * alpha,
+        rotation: cur.rotation + (target.rotation - cur.rotation) * alpha,
+        tx: cur.tx + (target.tx - cur.tx) * alpha,
+        ty: cur.ty + (target.ty - cur.ty) * alpha,
+      };
+    } else if (!active) {
+      this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     }
 
     // --------------------------------------------------- media window effect
@@ -475,6 +506,7 @@ export class HandFrameEngine {
       frameActive: active,
       region: this.regionLock,
       regionTransform,
+      faceAlign: active ? this.faceAlign : null,
       poseLandmarks: poseLandmarksThisFrame,
       fps: this.fpsEma,
       reason: detection.corners.length === 4 ? validity.reason : detection.reason,

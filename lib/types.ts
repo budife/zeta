@@ -116,6 +116,14 @@ export type Snapshot = {
   region: { kind: RegionKind | null; label: string; confidence: number };
   /** Transform that aligns the template's region with the window, if any. */
   regionTransform: import("./regionMapping").RegionTransform | null;
+  /**
+   * Similarity transform (scale + rotation + translation, video pixels) that
+   * maps the template's face anchors onto the user's face anchors, so the
+   * character's face tracks the real face. Identity/null when the selection is
+   * not on a face or no face is detected. Applied on the media element only —
+   * the clip window is a separate element and never transformed.
+   */
+  faceAlign: import("./faceAlignment").Similarity | null;
   /** Pose landmarks of the detected person (empty when unavailable). */
   poseLandmarks: NormalizedLandmark[];
   fps: number;

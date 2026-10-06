@@ -3,11 +3,15 @@ import type { FrameRect, NormalizedLandmark, Point } from "./types";
 /** Tuning constants for hand-frame detection. Deliberately tolerant. */
 export const FRAME_CONFIG = {
   /** Thumb tip ↔ index tip separation, relative to palm length, to form a corner. */
-  minTipSeparation: 0.45,
+  minTipSeparation: 0.25,
   /** Index finger considered extended when tip↔mcp / palmLength exceeds this. */
-  extendThreshold: 0.7,
-  /** How many of middle/ring/pinky must be curled to avoid open-palm false positives. */
-  minCurledFingers: 2,
+  extendThreshold: 0.55,
+  /**
+   * How many of middle/ring/pinky must be curled to avoid open-palm false
+   * positives. 0 = no finger-curl requirement: thumb + index tips alone define
+   * the window, no other gesture condition may reject it.
+   */
+  minCurledFingers: 0,
   /** Smallest accepted frame area as a fraction of the whole video area. */
   minAreaFraction: 0.035,
   /** Largest accepted frame area as a fraction of the whole video area. */
