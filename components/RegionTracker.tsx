@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { placeBox, toStagePixels } from "@/lib/stage";
+import { normBoxToVideo, normalizedToVideo, placeBox, toStagePixels } from "@/lib/stage";
 import { FACE_REGIONS, POSE_REGIONS, regionBox, type RegionKind } from "@/lib/regions";
 import type { Snapshot } from "@/lib/types";
 
@@ -22,19 +22,26 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
       const { region, poseLandmarks, faceLandmarks, videoWidth, videoHeight } = snapshot;
       const kind: RegionKind | null = region.kind;
 
-      const box = kind === null ? null : resolveRegionBox(kind, poseLandmarks, faceLandmarks);
+      // `resolveRegionBox` works in normalized [0..1]; placeBox takes video
+      // pixels. Convert explicitly — passing the NormBox straight through
+      // collapsed the box to the top-left corner at zero size.
+      const box =
+        kind === null
+          ? null
+          : resolveRegionBox(kind, poseLandmarks, faceLandmarks);
+      const videoBox = box ? normBoxToVideo(box, videoWidth, videoHeight) : null;
 
       if (boxRef.current) {
-        if (box) {
-          Object.assign(boxRef.current.style, placeBox(box, videoWidth, videoHeight));
+        if (videoBox) {
+          Object.assign(boxRef.current.style, placeBox(videoBox, videoWidth, videoHeight));
           boxRef.current.style.opacity = "1";
         } else {
           boxRef.current.style.opacity = "0";
         }
       }
       if (labelRef.current) {
-        if (box && kind) {
-          Object.assign(labelRef.current.style, placeBox(box, videoWidth, videoHeight));
+        if (videoBox && kind) {
+          Object.assign(labelRef.current.style, placeBox(videoBox, videoWidth, videoHeight));
           labelRef.current.textContent = `${region.label} ${(region.confidence * 100).toFixed(0)}%`;
           labelRef.current.style.opacity = "1";
         } else {
@@ -60,7 +67,7 @@ export function RegionTracker({ subscribe, enabled }: RegionTrackerProps) {
       ctx.fillStyle = "rgba(52, 211, 153, 0.9)";
       for (const lm of poseLandmarks) {
         const p = toStagePixels(
-          { x: lm.x * videoWidth, y: lm.y * videoHeight },
+          normalizedToVideo(lm, videoWidth, videoHeight),
           videoWidth,
           videoHeight,
           width,

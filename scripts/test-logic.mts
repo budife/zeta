@@ -5,7 +5,17 @@
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { CornerSmoother, RectSmoother, normalizeAngle } from "../lib/smoothing";
-import { clipPathPolygon, mediaMatrix, MIRROR_PREVIEW, windowToTemplateBox } from "../lib/stage";
+import {
+  clipPathPolygon,
+  mediaMatrix,
+  MIRROR_PREVIEW,
+  MIRROR_TRANSFORM,
+  normBoxToVideo,
+  normalizedToVideo,
+  toStageFraction,
+  toStagePixels,
+  windowToTemplateBox,
+} from "../lib/stage";
 import {
   advanceRegion,
   classifyRegion,
@@ -813,6 +823,61 @@ console.log("\n[23] media matrix = mirror o similarity (not a 180 rotation)");
     // S(0,0) = (20, 20) -> mirrored x = 1280 - 20 = 1260
     check("video px translation scaled to stage px", near(m, 0, 0, 1260, 20));
   }
+}
+
+console.log("\n[24] single coordinate mapping chain (normalized -> video -> stage)");
+{
+  const VW = 1280, VH = 720;
+  const SW = 960, SH = 540; // same aspect as the video, as page.tsx guarantees
+
+  // Link 1: normalized -> video intrinsic pixels.
+  const v = normalizedToVideo({ x: 0.75, y: 0.25 }, VW, VH);
+  check("normalizedToVideo", v.x === 960 && v.y === 180);
+
+  // Link 2: video px -> stage fraction. The mirror flips X only — never Y.
+  const f = toStageFraction({ x: 320, y: 100 }, VW, VH);
+  check(
+    "toStageFraction mirrors x only",
+    MIRROR_PREVIEW
+      ? Math.abs(f.x - (1 - 320 / VW)) < 1e-12 && f.y === 100 / VH
+      : Math.abs(f.x - 320 / VW) < 1e-12 && f.y === 100 / VH
+  );
+
+  // Link 3 must be link 2 times the stage size — they share one body, so a
+  // percentage overlay and a canvas overlay land on the same pixel.
+  const px = toStagePixels({ x: 320, y: 100 }, VW, VH, SW, SH);
+  check(
+    "toStagePixels = fraction x stage size",
+    Math.abs(px.x - f.x * SW) < 1e-9 && Math.abs(px.y - f.y * SH) < 1e-9
+  );
+
+  // Full chain for a landmark, both ends.
+  const lm = { x: 0.72, y: 0.31 };
+  const stage = toStagePixels(normalizedToVideo(lm, VW, VH), VW, VH, SW, SH);
+  const wantFrac = MIRROR_PREVIEW ? 1 - 0.72 : 0.72;
+  check(
+    "normalized -> stage matches example readout",
+    Math.abs(stage.x - wantFrac * SW) < 1e-9 && Math.abs(stage.y - 0.31 * SH) < 1e-9
+  );
+
+  // Normalized box -> video px box. A NormBox fed straight to placeBox()
+  // collapses to ~0,0 with ~0 size; this is the conversion that prevents it.
+  const nb = normBoxToVideo({ x: 0.4, y: 0.3, width: 0.2, height: 0.25 }, VW, VH);
+  check(
+    "normBoxToVideo scales all four fields",
+    nb.x === 512 && nb.y === 216 && nb.width === 256 && nb.height === 180
+  );
+
+  // The DOM mirror and the math mirror must be decided in exactly one place.
+  check(
+    "MIRROR_TRANSFORM agrees with MIRROR_PREVIEW",
+    MIRROR_TRANSFORM === (MIRROR_PREVIEW ? "scaleX(-1)" : "none")
+  );
+
+  // The clip polygon must agree with the same chain (same body, different unit).
+  const poly = clipPathPolygon([{ x: 320, y: 100 }], VW, VH);
+  const wantPoly = `${(f.x * 100).toFixed(3)}% ${(f.y * 100).toFixed(3)}%`;
+  check("clipPathPolygon uses the same chain", poly === wantPoly);
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

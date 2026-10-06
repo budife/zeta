@@ -1,5 +1,29 @@
-import type { Similarity } from "./faceAlignment";
 import type { Box, FrameRect, Point, VectorTransform } from "./types";
+import type { Similarity } from "./faceAlignment";
+
+/**
+ * ── The single coordinate mapping chain ─────────────────────────────────────
+ *
+ * MediaPipe emits landmarks normalized to [0..1] of the video frame. Every
+ * renderer in this app must reach the stage through exactly these links, in
+ * this order, and nowhere else:
+ *
+ *   1. normalizedToVideo()  [0..1]        → video intrinsic px (×W, ×H)
+ *   2. toStageFraction()    video px      → stage fraction 0..1 (cover + mirror)
+ *   3. toStagePixels()      video px      → stage px  (= link 2 × stage size)
+ *
+ * Links 2 and 3 share one body (`toStageFraction`), so they cannot drift.
+ *
+ * Cover invariant: app/page.tsx sizes `.stage` to the video's aspect ratio,
+ * so `object-fit: cover` has zero offset and a uniform scale — a video
+ * fraction IS a stage fraction. The invariant is enforced by construction
+ * (the stage is *derived* from videoWidth/videoHeight, not assumed to match)
+ * and the debug panel reports both bounds so a divergence is visible.
+ *
+ * The mirror is applied exactly ONCE, at link 2, and MIRROR_PREVIEW below is
+ * the only place that decides whether it happens — `MIRROR_TRANSFORM` is the
+ * CSS counterpart, so the DOM mirror and the math mirror cannot disagree.
+ */
 
 /**
  * The preview is rendered as a selfie mirror: the video is flipped
@@ -7,6 +31,13 @@ import type { Box, FrameRect, Point, VectorTransform } from "./types";
  * line up with what the user sees.
  */
 export const MIRROR_PREVIEW = true;
+
+/**
+ * CSS transform producing that same mirror. The camera video and the media
+ * layer use this instead of a hardcoded `scaleX(-1)`, so the DOM mirror and
+ * `MIRROR_PREVIEW` share one source of truth.
+ */
+export const MIRROR_TRANSFORM = MIRROR_PREVIEW ? "scaleX(-1)" : "none";
 
 export type Placement = {
   left: string;
@@ -20,16 +51,29 @@ function mirrorX(x: number): number {
   return MIRROR_PREVIEW ? 1 - x : x;
 }
 
+/** Link 1 — MediaPipe normalized [0..1] → video intrinsic pixels. */
+export function normalizedToVideo(point: Point, videoWidth: number, videoHeight: number): Point {
+  return { x: point.x * videoWidth, y: point.y * videoHeight };
+}
+
+/** Link 2 — video intrinsic px → stage fraction 0..1 (cover, then mirror). */
+export function toStageFraction(point: Point, videoWidth: number, videoHeight: number): Point {
+  return {
+    x: mirrorX(point.x / videoWidth),
+    y: point.y / videoHeight,
+  };
+}
+
 /** CSS placement for an oriented rectangle, centered with a -50% translate. */
 export function placeFrame(
   rect: FrameRect,
   videoWidth: number,
   videoHeight: number
 ): Placement {
-  const left = mirrorX(rect.cx / videoWidth);
+  const center = toStageFraction({ x: rect.cx, y: rect.cy }, videoWidth, videoHeight);
   return {
-    left: `${left * 100}%`,
-    top: `${(rect.cy / videoHeight) * 100}%`,
+    left: `${center.x * 100}%`,
+    top: `${center.y * 100}%`,
     width: `${(rect.width / videoWidth) * 100}%`,
     height: `${(rect.height / videoHeight) * 100}%`,
     // A horizontal mirror is a reflection, which reverses rotation direction.
@@ -45,12 +89,12 @@ export function placeBox(
   videoWidth: number,
   videoHeight: number
 ): Placement {
-  const right = mirrorX((box.x + box.width) / videoWidth);
-  const left = mirrorX(box.x / videoWidth);
+  const right = toStageFraction({ x: box.x + box.width, y: 0 }, videoWidth, videoHeight);
+  const left = toStageFraction({ x: box.x, y: 0 }, videoWidth, videoHeight);
   return {
-    left: `${Math.min(left, right) * 100}%`,
+    left: `${Math.min(left.x, right.x) * 100}%`,
     top: `${(box.y / videoHeight) * 100}%`,
-    width: `${Math.abs(right - left) * 100}%`,
+    width: `${Math.abs(right.x - left.x) * 100}%`,
     height: `${(box.height / videoHeight) * 100}%`,
     transform: "none",
   };
@@ -62,9 +106,10 @@ export function placeVector(
   videoWidth: number,
   videoHeight: number
 ): Placement {
+  const center = toStageFraction({ x: vector.cx, y: vector.cy }, videoWidth, videoHeight);
   return {
-    left: `${mirrorX(vector.cx / videoWidth) * 100}%`,
-    top: `${(vector.cy / videoHeight) * 100}%`,
+    left: `${center.x * 100}%`,
+    top: `${center.y * 100}%`,
     width: `${(vector.size / videoWidth) * 100}%`,
     height: `${(vector.size / videoHeight) * 100}%`,
     transform: `translate(-50%, -50%) rotate(${
@@ -73,7 +118,13 @@ export function placeVector(
   };
 }
 
-/** Maps a video-space point to stage pixels (used by the canvas debug layer). */
+/**
+ * Link 3 — video intrinsic px → stage pixels.
+ *
+ * Thin wrapper over `toStageFraction`, so percentage overlays (CSS left/top)
+ * and pixel overlays (canvas) can never disagree by even a fraction of a
+ * pixel.
+ */
 export function toStagePixels(
   point: Point,
   videoWidth: number,
@@ -81,9 +132,28 @@ export function toStagePixels(
   stageWidth: number,
   stageHeight: number
 ): Point {
+  const f = toStageFraction(point, videoWidth, videoHeight);
+  return { x: f.x * stageWidth, y: f.y * stageHeight };
+}
+
+/**
+ * Normalized box (lib/regions, 0..1) → video-pixel box.
+ *
+ * Keeps the two box spaces explicit: `regionBox()` and the classifier work in
+ * normalized coordinates, while every CSS placement helper takes video pixels.
+ * Passing a NormBox straight to `placeBox()` silently collapses it to the
+ * top-left corner — this is the conversion that prevents that.
+ */
+export function normBoxToVideo(
+  box: { x: number; y: number; width: number; height: number },
+  videoWidth: number,
+  videoHeight: number
+): Box {
   return {
-    x: mirrorX(point.x / videoWidth) * stageWidth,
-    y: (point.y / videoHeight) * stageHeight,
+    x: box.x * videoWidth,
+    y: box.y * videoHeight,
+    width: box.width * videoWidth,
+    height: box.height * videoHeight,
   };
 }
 
@@ -100,9 +170,8 @@ export function clipPathPolygon(
 ): string {
   return corners
     .map((p) => {
-      const x = mirrorX(p.x / videoWidth) * 100;
-      const y = (p.y / videoHeight) * 100;
-      return `${x.toFixed(3)}% ${y.toFixed(3)}%`;
+      const f = toStageFraction(p, videoWidth, videoHeight);
+      return `${(f.x * 100).toFixed(3)}% ${(f.y * 100).toFixed(3)}%`;
     })
     .join(", ");
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { MIRROR_PREVIEW, placeFrame, toStagePixels } from "@/lib/stage";
+import { placeFrame, toStageFraction } from "@/lib/stage";
 import type { Snapshot } from "@/lib/types";
 
 export type HandFrameProps = {
@@ -56,9 +56,8 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
             "points",
             windowCorners
               .map((p) => {
-                const x = (MIRROR_PREVIEW ? 1 - p.x / videoWidth : p.x / videoWidth) * 100;
-                const y = (p.y / videoHeight) * 100;
-                return `${x.toFixed(3)},${y.toFixed(3)}`;
+                const f = toStageFraction(p, videoWidth, videoHeight);
+                return `${(f.x * 100).toFixed(3)},${(f.y * 100).toFixed(3)}`;
               })
               .join(" ")
           );
@@ -85,7 +84,7 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
           el.style.opacity = "0";
           return;
         }
-        const p = toStagePixels(corner, videoWidth, videoHeight, 1, 1);
+        const p = toStageFraction(corner, videoWidth, videoHeight);
         el.style.opacity = "1";
         el.style.left = `${p.x * 100}%`;
         el.style.top = `${p.y * 100}%`;

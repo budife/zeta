@@ -33,7 +33,6 @@ import {
   userFacePoints,
   IDENTITY_SIMILARITY,
 } from "./faceAlignment";
-import { MIRROR_PREVIEW } from "./stage";
 
 const WASM_PATH = "/mediapipe/wasm";
 const HAND_MODEL_PATH = "/models/hand_landmarker.task";
@@ -492,10 +491,11 @@ export class HandFrameEngine {
     // behind the clipping window without any zoom/pan. The classifier still
     // runs for the debug readout but does not affect rendering.
     const regionTransform = null as import("./regionMapping").RegionTransform | null;
+    // MediaPipe's raw hand output — the input side of the coordinate chain.
+    const rawHandLandmarks = handResult.landmarks ?? [];
     const snapshot: Snapshot = {
-      hands: (handResult.landmarks ?? []).map((lm) =>
-        toPixelLandmarks(lm, width, height)
-      ),
+      hands: rawHandLandmarks.map((lm) => toPixelLandmarks(lm, width, height)),
+      handLandmarksNorm: rawHandLandmarks,
       rawFrame,
       frame,
       faceBox,
@@ -517,8 +517,8 @@ export class HandFrameEngine {
     // Diagnostic hook for manual inspection / automated checks.
     if (typeof window !== "undefined") {
       (window as unknown as { __handFrameDebug?: unknown }).__handFrameDebug = {
-        handLandmarkCount: handResult.landmarks?.length ?? 0,
-        rawHandLandmarks: handResult.landmarks ?? [],
+        handLandmarkCount: rawHandLandmarks.length,
+        rawHandLandmarks,
         faceLandmarkCount: faceLandmarksThisFrame.length,
         poseLandmarkCount: poseLandmarksThisFrame.length,
         detection,

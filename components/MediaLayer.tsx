@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { clipPathPolygon, mediaMatrix } from "@/lib/stage";
+import { clipPathPolygon, mediaMatrix, MIRROR_TRANSFORM } from "@/lib/stage";
 import type { Snapshot } from "@/lib/types";
 
 export type MediaLayerProps = {
@@ -88,7 +88,11 @@ export function MediaLayer({ subscribe, src, faceAlignEnabled = true }: MediaLay
   return (
     <div className="media-layer" aria-hidden="true">
       <div ref={clipRef} className="media-layer__clip">
-        <div ref={contentRef} className="media-layer__content">
+        <div
+          ref={contentRef}
+          className="media-layer__content"
+          style={{ transform: MIRROR_TRANSFORM }}
+        >
           {isVideo ? (
             <video
               ref={mediaRef}

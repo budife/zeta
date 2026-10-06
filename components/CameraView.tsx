@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useState } from "react";
+import { MIRROR_TRANSFORM } from "@/lib/stage";
 import type { AppStatus } from "@/lib/types";
 
 export type CameraViewProps = {
@@ -40,12 +41,15 @@ export const CameraView = forwardRef<HTMLVideoElement, CameraViewProps>(
 
     return (
       <div className="camera-view">
+        {/* Selfie mirror comes from MIRROR_PREVIEW in lib/stage.ts, so the DOM
+            flip and the overlay math can never disagree. */}
         <video
           ref={ref}
           className="camera-video"
           autoPlay
           playsInline
           muted
+          style={{ transform: MIRROR_TRANSFORM }}
           onLoadedMetadata={handleLoadedMetadata}
           data-ready={ready}
         />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { placeBox, toStagePixels } from "@/lib/stage";
+import { normalizedToVideo, placeBox, toStagePixels } from "@/lib/stage";
 import type { Snapshot } from "@/lib/types";
 
 export type FaceTrackerProps = {
@@ -51,7 +51,7 @@ export function FaceTracker({ subscribe, enabled }: FaceTrackerProps) {
       for (let i = 0; i < faceLandmarks.length; i += step) {
         const lm = faceLandmarks[i];
         const p = toStagePixels(
-          { x: lm.x * videoWidth, y: lm.y * videoHeight },
+          normalizedToVideo(lm, videoWidth, videoHeight),
           videoWidth,
           videoHeight,
           width,

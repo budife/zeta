@@ -85,6 +85,12 @@ export type AppStatus = {
 export type Snapshot = {
   /** Pixel-space landmarks per detected hand. */
   hands: Point[][];
+  /**
+   * The raw MediaPipe hand output, normalized [0..1] — the input side of the
+   * coordinate chain, kept alongside `hands` so the debug overlay can print
+   * "raw → stage" for a landmark and prove the mapping end to end.
+   */
+  handLandmarksNorm: NormalizedLandmark[][];
   /** Candidate frame before smoothing (preview), null when not estimable. */
   rawFrame: FrameRect | null;
   /** Smoothed, active frame — null while the frame is inactive. */

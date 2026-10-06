@@ -107,8 +107,12 @@ button {
   height: 100%;
   object-fit: cover;
   display: block;
-  /* Selfie mirror, so moving a hand to the right moves the overlay to the right. */
-  transform: scaleX(-1);
+  /*
+   * Selfie mirror — set inline from MIRROR_TRANSFORM (lib/stage.ts) rather
+   * than here, so the DOM flip and the overlay math share one source of
+   * truth. Hardcoding `scaleX(-1)` next to `MIRROR_PREVIEW` is how the two
+   * drift apart.
+   */
   background: #05060a;
 }
 
@@ -319,12 +323,11 @@ button {
   position: absolute;
   inset: 0;
   /*
-   * JS composes mirror ∘ face-alignment into one matrix with
-   * transform-origin: 0 0 (see components/MediaLayer.tsx). The fallback
-   * below only renders before the first snapshot arrives — it must mirror
-   * about the CENTER to match, so it uses the default origin.
+   * Mirror ∘ face-alignment is composed into a single matrix with
+   * transform-origin: 0 0 (components/MediaLayer.tsx). The inline value set
+   * at mount is the same MIRROR_TRANSFORM the camera uses — it only shows
+   * until the first snapshot arrives, but it must still match.
    */
-  transform: scaleX(-1);
 }
 
 .media-layer__media {
