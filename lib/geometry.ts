@@ -4,6 +4,14 @@ import type { FrameRect, NormalizedLandmark, Point } from "./types";
 export const FRAME_CONFIG = {
   /** Thumb tip ↔ index tip separation, relative to palm length, to form a corner. */
   minTipSeparation: 0.25,
+  /**
+   * Every one of the 21 landmarks must sit within this many palm lengths of
+   * the wrist. Validates the WHOLE hand, not just the two anchor tips, so a
+   * detection that teleports a fingertip cannot pass because thumb+index alone
+   * look plausible. Deliberately generous — it is a plausibility bound, not an
+   * anatomical model. Not a bounding box: a radius around the wrist.
+   */
+  maxLandmarkReach: 3.5,
   /** Index finger considered extended when tip↔mcp / palmLength exceeds this. */
   extendThreshold: 0.55,
   /**

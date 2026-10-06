@@ -20,7 +20,7 @@ import {
 } from "./selection";
 import { calculateFrame, detectHandFrame, isValidQuad } from "./handFrame";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
-import { RectSmoother, CornerSmoother, smoothingAlpha } from "./smoothing";
+import { RectSmoother, CornerSmoother, planCornerFrame, smoothingAlpha } from "./smoothing";
 import {
   advanceRegion,
   classifyRegion,
@@ -107,6 +107,8 @@ export class HandFrameEngine {
 
   private frameSmoother = new RectSmoother();
   private cornerSmoother = new CornerSmoother();
+  /** Frames the corner smoother has been held without valid corners. */
+  private cornerHeld = 0;
 
   private selection: SelectionState = INITIAL_SELECTION;
 
@@ -302,6 +304,7 @@ export class HandFrameEngine {
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.frameSmoother.reset();
     this.cornerSmoother.reset();
+    this.cornerHeld = 0;
     this.patchStatus({
       camera: "off",
       hands: 0,
@@ -384,22 +387,35 @@ export class HandFrameEngine {
     if (advance.deactivated) {
       this.frameSmoother.reset();
       this.cornerSmoother.reset();
+      this.cornerHeld = 0;
       this.lastFaceBox = null;
       this.faceState = "none";
       this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     }
 
+    // Corners are smoothed from the FORMING stage onward — never raw →
+    // rendered — and a detection blink holds the last position for a few
+    // frames instead of emptying instantly (see planCornerFrame). The window
+    // is published whether or not the selection is active; every consumer
+    // gates the visible clip on `frameActive`.
+    const plan = planCornerFrame(
+      this.cornerHeld,
+      hasCorners && validity.valid,
+      active
+    );
+    this.cornerHeld = plan.held;
+    if (plan.clear) this.cornerSmoother.reset();
+    if (plan.feed) this.cornerSmoother.update(detection.corners, dt);
+    const windowCorners = this.cornerSmoother.value ?? [];
+
     let frame: FrameRect | null = null;
-    let windowCorners: Point[] = [];
     if (active) {
       if (hasCorners && validity.valid) {
-        windowCorners = this.cornerSmoother.update(detection.corners, dt);
         if (rawFrame) frame = this.frameSmoother.update(rawFrame, dt);
       } else {
-        // Temporary dropout: hold the last smoothed window instead of blanking
-        // it. The smoothers keep their state, so the window stays put and no
-        // snap happens when detection returns.
-        windowCorners = this.cornerSmoother.value ?? [];
+        // Temporary dropout: hold the last smoothed rectangle instead of
+        // blanking it. The smoothers keep their state, so nothing snaps when
+        // detection returns.
         frame = this.frameSmoother.value;
       }
     }

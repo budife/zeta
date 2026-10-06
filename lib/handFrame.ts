@@ -19,15 +19,34 @@ import {
 /**
  * Verdict for one hand: does it expose two usable corners?
  *
- * Deliberately minimal: the only thing that matters is that the thumb tip and
- * index tip are far enough apart (and the hand big enough) that the two points
- * can serve as corners. No finger-curl rules, no "L" shape requirement, no
- * rectangle condition — the four corners come straight from the landmarks.
+ * Validated against ALL 21 landmarks, not just the thumb and index tips: a
+ * detection whose landmarks are incomplete or whose points sit nowhere near
+ * the wrist is rejected before its tips can be used as corners. The anchors
+ * themselves stay exactly four — thumb tip + index tip per hand — and no
+ * bounding box is involved anywhere in this check.
+ *
+ * Beyond that the only condition is that the thumb tip and index tip are far
+ * enough apart (and the hand big enough) that the two points can serve as
+ * corners. No finger-curl rules, no "L" shape requirement, no rectangle
+ * condition — the four corners come straight from the landmarks.
  */
 function checkHandGesture(hand: Point[]): HandGestureVerdict {
-  const palm = dist(hand[HAND_LANDMARK.wrist], hand[HAND_LANDMARK.middleMcp]);
+  if (hand.length < 21) {
+    return { ok: false, reason: "hand-incomplete" };
+  }
+
+  const wrist = hand[HAND_LANDMARK.wrist];
+  const palm = dist(wrist, hand[HAND_LANDMARK.middleMcp]);
   if (palm < 8) {
     return { ok: false, reason: "hand-too-far" };
+  }
+
+  // Every landmark must be reachable from the wrist at the hand's own scale.
+  const maxReach = palm * FRAME_CONFIG.maxLandmarkReach;
+  for (const landmark of hand) {
+    if (dist(wrist, landmark) > maxReach) {
+      return { ok: false, reason: "landmark-out-of-reach" };
+    }
   }
 
   const separation =

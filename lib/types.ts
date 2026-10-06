@@ -103,9 +103,14 @@ export type Snapshot = {
   /** The four raw frame corners (fingertips), empty when unavailable. */
   corners: Point[];
   /**
-   * The four corners of the clipping window after smoothing, in video-pixel
-   * space. Empty while the frame is inactive. Unlike `frame` this is the actual
-   * quadrilateral the hands form, so it may be trapezoid or asymmetric.
+   * The four corners of the hand-made window after smoothing, in video-pixel
+   * space. Populated whether the selection is forming or active — this is the
+   * single source the yellow dots and the clip-path both read, so they can
+   * never disagree. It holds its last position for a few frames when
+   * detection blinks instead of emptying instantly, and empties only when the
+   * selection deactivates. Unlike `frame` this is the actual quadrilateral the
+   * hands form, so it may be trapezoid or asymmetric. Gating the *visible*
+   * clip on `frameActive` is what keeps it hidden while merely forming.
    */
   windowCorners: Point[];
   /**

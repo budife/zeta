@@ -18,10 +18,10 @@ export type HandFrameProps = {
  * Draws the hand-made selection.
  *
  * Production (debug off): exactly four yellow dots, one per fingertip corner
- * (left thumb, left index, right thumb, right index). While the window is
- * active the dots follow the smoothed corners the clip-path uses, so they sit
- * on the visible edge of the window; before activation they show the raw
- * detected corners as live feedback.
+ * (thumb + index of each hand). The dots follow `windowCorners` — the SAME
+ * smoothed corners the clip-path uses — in both states, so they sit on the
+ * visible edge of the window once active and are already smoothed while the
+ * window is still forming (never raw → rendered).
  *
  * Debug: additionally the fitted candidate rectangle (dashed) and the outline
  * of the clipped quadrilateral. No dashed blue line is ever rendered in
@@ -34,7 +34,7 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
 
   useEffect(() => {
     const off = subscribe((snapshot) => {
-      const { rawFrame, windowCorners, videoWidth, videoHeight, corners } = snapshot;
+      const { rawFrame, windowCorners, videoWidth, videoHeight } = snapshot;
 
       // Debug-only candidate: fitted rectangle preview while forming.
       if (candidateRef.current) {
@@ -68,15 +68,8 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
       }
 
       // Four fingertip dots — always rendered, never dashed, never blue.
-      // Active window: use the smoothed corners (exactly what the clip uses).
-      // While forming: show the raw detected corners as feedback.
-      const dotPoints = active
-        ? windowCorners.length === 4
-          ? windowCorners
-          : []
-        : corners.length === 4
-          ? corners
-          : [];
+      // One source: the smoothed corners the clip uses, in both states.
+      const dotPoints = windowCorners;
       cornerRefs.current.forEach((el, i) => {
         if (!el) return;
         const corner = dotPoints[i];

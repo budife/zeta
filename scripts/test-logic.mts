@@ -4,7 +4,7 @@
  */
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
-import { CornerSmoother, RectSmoother, normalizeAngle } from "../lib/smoothing";
+import { CornerSmoother, RectSmoother, normalizeAngle, planCornerFrame, FORMING_HOLD_FRAMES } from "../lib/smoothing";
 import {
   clipPathPolygon,
   mediaMatrix,
@@ -44,23 +44,88 @@ import {
 const W = 1280;
 const H = 720;
 
-/** Builds a synthetic 21-landmark hand. Only points the gesture check reads matter. */
+/**
+ * Builds a synthetic, reachable 21-landmark hand whose thumb tip and index tip
+ * land exactly on the requested points.
+ *
+ * The wrist is placed 1.5 palms behind the midpoint of the two tips, along the
+ * axis across the thumb↔index spread, so every landmark stays within the
+ * hand's own reach of the wrist — which is exactly what lib/handFrame.ts
+ * validates across all 21 points. The thumb chain is pinned to the requested
+ * thumb tip; the index chain likewise; the other three fingers are free.
+ */
 function hand(thumbTip, indexTip, palm = 60) {
+  const T = { x: thumbTip.x, y: thumbTip.y };
+  const I = { x: indexTip.x, y: indexTip.y };
+  const mid = { x: (T.x + I.x) / 2, y: (T.y + I.y) / 2 };
+  const d = { x: I.x - T.x, y: I.y - T.y };
+  const spread = Math.hypot(d.x, d.y) || 1;
+
+  // Across the thumb↔index spread; the wrist sits behind the midpoint on it.
+  const n = { x: -d.y / spread, y: d.x / spread };
+  const wrist = { x: mid.x + n.x * 1.5 * palm, y: mid.y + n.y * 1.5 * palm };
+  const f = { x: -n.x, y: -n.y }; // wrist -> fingers
+  const s = { x: -f.y, y: f.x }; // across the hand
+
+  /** Landmark `a` palms along the hand and `b` palms across it. */
+  const at = (a, b) => ({
+    x: wrist.x + (f.x * a + s.x * b) * palm,
+    y: wrist.y + (f.y * a + s.y * b) * palm,
+    z: 0,
+  });
+  /** `segments` evenly spaced joints on the straight path from `from` to `to`. */
+  const chain = (from, to, segments) => {
+    const out = [];
+    for (let k = 1; k <= segments; k++) {
+      const t = k / segments;
+      out.push({
+        x: from.x + (to.x - from.x) * t,
+        y: from.y + (to.y - from.y) * t,
+        z: 0,
+      });
+    }
+    return out;
+  };
+
   const lm = [];
   for (let i = 0; i < 21; i++) lm.push({ x: 0, y: 0, z: 0 });
-  lm[0] = { x: 0, y: 0, z: 0 };
-  lm[2] = { x: 0, y: -palm, z: 0 };
-  lm[5] = { x: palm * 0.7, y: -palm * 0.5, z: 0 };
-  lm[9] = { x: palm, y: 0, z: 0 };
-  lm[13] = { x: palm * 0.7, y: palm * 0.5, z: 0 };
-  lm[17] = { x: 0, y: palm, z: 0 };
-  lm[4] = { x: thumbTip.x, y: thumbTip.y, z: 0 };
-  lm[8] = { x: indexTip.x, y: indexTip.y, z: 0 };
-  lm[6] = { x: lm[5].x * 0.6, y: lm[5].y * 0.6, z: 0 };
-  // middle / ring / pinky curled: tips folded back toward their MCP joints
-  lm[12] = { x: lm[9].x * 0.5, y: lm[9].y * 0.5, z: 0 };
-  lm[16] = { x: lm[13].x * 0.5, y: lm[13].y * 0.5, z: 0 };
-  lm[20] = { x: lm[17].x * 0.5, y: lm[17].y * 0.5, z: 0 };
+
+  lm[0] = at(0, 0); // wrist
+  lm[9] = at(1.0, 0); // middle MCP — defines `palm`
+  lm[5] = at(0.95, -0.4); // index MCP
+  lm[13] = at(0.95, 0.4); // ring MCP
+  lm[17] = at(0.85, 0.75); // pinky MCP
+  lm[1] = at(0.3, -0.55); // thumb CMC
+  lm[2] = at(0.7, -1.0); // thumb MCP
+
+  const thumbTipPt = { x: T.x, y: T.y, z: 0 };
+  const indexTipPt = { x: I.x, y: I.y, z: 0 };
+
+  // Thumb: 1 -> 2 already placed, interpolate 2 -> 3 -> 4(thumb tip).
+  const thumb = chain(lm[2], thumbTipPt, 2);
+  lm[3] = thumb[0];
+  lm[4] = thumb[1];
+
+  const index = chain(lm[5], indexTipPt, 3);
+  lm[6] = index[0];
+  lm[7] = index[1];
+  lm[8] = index[2];
+
+  const middle = chain(lm[9], at(2.2, 0), 3);
+  lm[10] = middle[0];
+  lm[11] = middle[1];
+  lm[12] = middle[2];
+
+  const ring = chain(lm[13], at(2.1, 0.55), 3);
+  lm[14] = ring[0];
+  lm[15] = ring[1];
+  lm[16] = ring[2];
+
+  const pinky = chain(lm[17], at(1.9, 1.05), 3);
+  lm[18] = pinky[0];
+  lm[19] = pinky[1];
+  lm[20] = pinky[2];
+
   return lm;
 }
 
@@ -878,6 +943,66 @@ console.log("\n[24] single coordinate mapping chain (normalized -> video -> stag
   const poly = clipPathPolygon([{ x: 320, y: 100 }], VW, VH);
   const wantPoly = `${(f.x * 100).toFixed(3)}% ${(f.y * 100).toFixed(3)}%`;
   check("clipPathPolygon uses the same chain", poly === wantPoly);
+}
+
+console.log("\n[25] hand validation uses all 21 landmarks, not just the two tips");
+{
+  const good = hand({ x: 340, y: 200 }, { x: 600, y: 200 }, 70);
+  const other = hand({ x: 940, y: 520 }, { x: 680, y: 520 }, 70);
+
+  // A landmark teleported far from the wrist: the thumb and index tips still
+  // look perfectly plausible on their own, so a tip-only check accepts it.
+  const teleported = hand({ x: 340, y: 200 }, { x: 600, y: 200 }, 70);
+  teleported[12] = { x: 2600, y: -900, z: 0 };
+  const detA = detectHandFrame([toNorm(teleported), toNorm(other)], W, H);
+  check(
+    "teleported landmark rejected",
+    !detA.gestures[0].ok,
+    JSON.stringify(detA.gestures[0])
+  );
+  check(
+    "reason landmark-out-of-reach",
+    detA.gestures[0].reason === "landmark-out-of-reach",
+    detA.gestures[0].reason
+  );
+
+  // An incomplete detection (fewer than the 21 landmarks MediaPipe emits).
+  const truncated = good.slice(0, 20);
+  const detB = detectHandFrame([toNorm(truncated), toNorm(other)], W, H);
+  check(
+    "incomplete hand rejected",
+    !detB.gestures[0].ok && detB.gestures[0].reason === "hand-incomplete",
+    JSON.stringify(detB.gestures[0])
+  );
+
+  // A complete, coherent hand still passes.
+  const detC = detectHandFrame([toNorm(good), toNorm(other)], W, H);
+  check("coherent hand accepted", detC.gestures.every((g) => g.ok), JSON.stringify(detC.gestures));
+  check("coherent hand yields 4 corners", detC.corners.length === 4, detC.reason);
+}
+
+console.log("\n[26] corner feed plan — smooth while forming, hold, then clear");
+{
+  // Valid corners: always feed the smoother, and reset the hold counter.
+  check("valid -> feed", planCornerFrame(0, true, false).feed === true);
+  check("valid -> no clear", planCornerFrame(0, true, false).clear === false);
+  check("valid -> hold resets", planCornerFrame(4, true, false).held === 0);
+
+  // Detection blinks while forming: hold, never clear on the first frames —
+  // the dots must not snap to empty the instant a landmark drops out.
+  const first = planCornerFrame(0, false, false);
+  check("forming dropout holds", first.clear === false && first.held === 1);
+  check(
+    `forming holds ${FORMING_HOLD_FRAMES} frames, clears on the next`,
+    [0, 1, 2].every((h) => planCornerFrame(h, false, false).clear === false) &&
+      planCornerFrame(FORMING_HOLD_FRAMES, false, false).clear === true
+  );
+
+  // Selection live: hold indefinitely — the window must never blink; the
+  // selection machine decides when to deactivate and reset it.
+  const live = planCornerFrame(FORMING_HOLD_FRAMES + 10, false, true);
+  check("live selection never clears", live.clear === false);
+  check("live selection still counts", live.held === FORMING_HOLD_FRAMES + 11);
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

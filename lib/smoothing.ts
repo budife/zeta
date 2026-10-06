@@ -91,6 +91,47 @@ export class RectSmoother {
  * matched to their previous positions by nearest distance, so the smoothing
  * stays attached to the same fingertip even if the angular sort reorders them.
  */
+/**
+ * How many consecutive frames a forming (not yet locked) window keeps its last
+ * corner position when detection blinks, before the stale dots are cleared.
+ * Requirement: never let `corners = []` land instantly on a single dropout.
+ */
+export const FORMING_HOLD_FRAMES = 3;
+
+export type CornerFramePlan = {
+  /** Feed this frame's raw corners into the smoother. */
+  feed: boolean;
+  /** Forget the smoothed corners — they are stale. */
+  clear: boolean;
+  /** Consecutive frames the smoother has been held without valid corners. */
+  held: number;
+};
+
+/**
+ * Decides what the corner smoother should do for one frame.
+ *
+ * Corners are smoothed from the FORMING stage onward (not raw → rendered), so
+ * the four fingertip dots never jump. When detection blinks:
+ *
+ *  - selection LIVE     → hold forever. The window must not blink; the
+ *    selection machine decides when to deactivate and reset the smoother.
+ *  - selection FORMING  → hold for FORMING_HOLD_FRAMES, then clear, so stale
+ *    dots do not linger after the hands actually left.
+ */
+export function planCornerFrame(
+  held: number,
+  hasValidCorners: boolean,
+  frameActive: boolean
+): CornerFramePlan {
+  if (hasValidCorners) return { feed: true, clear: false, held: 0 };
+  const next = held + 1;
+  return {
+    feed: false,
+    clear: !frameActive && next > FORMING_HOLD_FRAMES,
+    held: next,
+  };
+}
+
 export class CornerSmoother {
   private state: Point[] | null = null;
 
