@@ -17,6 +17,22 @@ import {
 } from "./geometry";
 
 /**
+ * When the gesture rules apply. The two tiers exist because a frame is much
+ * harder to *start* than to *keep*:
+ *
+ * - `acquire` is used while SEARCHING/CANDIDATE. The user is still forming the
+ *   frame, so the pose is checked at full strictness to make sure they really
+ *   mean it — the L must be recognisable.
+ * - `track` is used once the selection is LOCKED. The gesture is never
+ *   re-validated from then on: the user may relax their fingers, and the frame
+ *   must stay connected (the spec is explicit — TEST 12). Only the two anchors
+ *   need to remain readable and plausible. A degenerate shape still fails
+ *   `isValidQuad` downstream, so dropping the spread check here cannot pin a
+ *   collapsed window in place.
+ */
+export type GestureMode = "acquire" | "track";
+
+/**
  * Verdict for one hand: does it expose two usable corners?
  *
  * Validated against ALL 21 landmarks, not just the thumb and index tips: a
@@ -25,34 +41,45 @@ import {
  * themselves stay exactly four — thumb tip + index tip per hand — and no
  * bounding box is involved anywhere in this check.
  *
- * Beyond that the only condition is that the thumb tip and index tip are far
- * enough apart (and the hand big enough) that the two points can serve as
- * corners. No finger-curl rules, no "L" shape requirement, no rectangle
- * condition — the four corners come straight from the landmarks.
+ * Beyond that the only condition (in `acquire` mode) is that the thumb tip and
+ * index tip are far enough apart (and the hand big enough) that the two points
+ * can serve as corners. No finger-curl rules, no "L" shape requirement, no
+ * rectangle condition — the four corners come straight from the landmarks.
  */
-function checkHandGesture(hand: Point[]): HandGestureVerdict {
-  if (hand.length < 21) {
+function checkHandGesture(hand: Point[], mode: GestureMode): HandGestureVerdict {
+  // Acquiring demands a complete MediaPipe hand. Tracking only needs the two
+  // anchors to be readable — a frame that loses a few landmarks must not die.
+  const minLandmarks = mode === "track" ? HAND_LANDMARK.indexTip + 1 : 21;
+  if (hand.length < minLandmarks) {
     return { ok: false, reason: "hand-incomplete" };
   }
 
   const wrist = hand[HAND_LANDMARK.wrist];
   const palm = dist(wrist, hand[HAND_LANDMARK.middleMcp]);
-  if (palm < 8) {
+  const minPalm = mode === "track" ? FRAME_CONFIG.trackMinPalm : FRAME_CONFIG.minPalm;
+  if (palm < minPalm) {
     return { ok: false, reason: "hand-too-far" };
   }
 
   // Every landmark must be reachable from the wrist at the hand's own scale.
-  const maxReach = palm * FRAME_CONFIG.maxLandmarkReach;
+  // The bound is looser once locked: this is an anti-teleport guard on the
+  // input side, not a gesture rule, so tracking tolerance applies to it too.
+  const maxReach =
+    palm * (mode === "track" ? FRAME_CONFIG.maxLandmarkReachTrack : FRAME_CONFIG.maxLandmarkReach);
   for (const landmark of hand) {
     if (dist(wrist, landmark) > maxReach) {
       return { ok: false, reason: "landmark-out-of-reach" };
     }
   }
 
-  const separation =
-    dist(hand[HAND_LANDMARK.thumbTip], hand[HAND_LANDMARK.indexTip]) / palm;
-  if (separation < FRAME_CONFIG.minTipSeparation) {
-    return { ok: false, reason: "fingers-not-spread" };
+  // The spread check is ACQUIRE-ONLY. Requiring an L every frame after lock is
+  // exactly what made the frame drop when the user relaxed their fingers.
+  if (mode === "acquire") {
+    const separation =
+      dist(hand[HAND_LANDMARK.thumbTip], hand[HAND_LANDMARK.indexTip]) / palm;
+    if (separation < FRAME_CONFIG.minTipSeparation) {
+      return { ok: false, reason: "fingers-not-spread" };
+    }
   }
 
   return { ok: true, reason: "ok" };
@@ -64,15 +91,20 @@ function checkHandGesture(hand: Point[]): HandGestureVerdict {
  * Each contributing hand supplies its thumb tip and index tip; the two hands
  * therefore supply the four corners of the frame, with nothing hardcoded:
  * position, size and rotation all follow the hands.
+ *
+ * `mode` selects the gesture strictness (see `GestureMode`): strict while
+ * acquiring, forgiving once the frame is locked. Defaults to `acquire` so
+ * callers that do not care keep the old behaviour.
  */
 export function detectHandFrame(
   landmarks: NormalizedLandmark[][],
   width: number,
-  height: number
+  height: number,
+  mode: GestureMode = "acquire"
 ): HandFrameDetection {
   const hands = (landmarks ?? []).map((lm) => toPixelLandmarks(lm, width, height));
 
-  const gestures = hands.map((hand) => checkHandGesture(hand));
+  const gestures = hands.map((hand) => checkHandGesture(hand, mode));
   const contributing = hands.filter((_, i) => gestures[i].ok);
 
   if (contributing.length < 2) {

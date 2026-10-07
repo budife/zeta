@@ -9,6 +9,7 @@ import { FaceTracker } from "./FaceTracker";
 import { PoseTracker } from "./PoseTracker";
 import { RegionTracker } from "./RegionTracker";
 import { templateRegionFor } from "@/lib/templateRegions";
+import { TRACK_CONFIG } from "@/lib/frameTracker";
 
 export type DebugOverlayProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
@@ -188,6 +189,14 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
                 return `${box.x},${box.y} ${box.width}×${box.height}`;
               })()}
             </dd>
+          </div>
+          <div>
+            <dt>Phase</dt>
+            <dd>{stats ? stats.selectionPhase.toUpperCase() : "—"}</dd>
+          </div>
+          <div>
+            <dt>Missed</dt>
+            <dd>{stats ? `${stats.missedFrames}/${TRACK_CONFIG.maxMissedFrames}` : "—"}</dd>
           </div>
           <div>
             <dt>State</dt>

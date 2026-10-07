@@ -12,6 +12,17 @@ export const FRAME_CONFIG = {
    * anatomical model. Not a bounding box: a radius around the wrist.
    */
   maxLandmarkReach: 3.5,
+  /**
+   * Looser reach bound used once the frame is LOCKED. After lock the gesture is
+   * no longer re-validated (see `track` mode in handFrame.ts), but a detection
+   * that teleports a landmark must still be rejected — just with more slack for
+   * MediaPipe's ordinary jitter than the acquisition check allows.
+   */
+  maxLandmarkReachTrack: 5,
+  /** Smallest palm (wrist→middle MCP, px) accepted while ACQUIRING a frame. */
+  minPalm: 8,
+  /** Smallest palm accepted while TRACKING a locked frame (more forgiving). */
+  trackMinPalm: 6,
   /** Index finger considered extended when tip↔mcp / palmLength exceeds this. */
   extendThreshold: 0.55,
   /**

@@ -70,7 +70,8 @@ lib/
   regionMapping.ts    Map region → transform media (scale/rotate, transform-origin)
   templateRegions.ts  Posisi tiap region di dalam template.svg (satu-satunya tempat tuning)
   faceTracking.ts     Face bounding box + faceInSelection()
-  smoothing.ts        RectSmoother + CornerSmoother (interpolation anti-jitter)
+  smoothing.ts        smoothingAlpha() — faktor easing frame-rate independent
+  frameTracker.ts     StickyFrameTracker: quadrilateral lengket (smoothing + prediksi kecepatan + hold)
   geometry.ts         Utilitas geometri + konstanta tuning FRAME_CONFIG
   stage.ts            Konversi koordinat video → koordinat stage (mirror) + clipPathPolygon()
   types.ts            Tipe shared
@@ -158,13 +159,16 @@ Pipeline berjalan dalam satu `requestAnimationFrame` di `lib/engine.ts`. Hanya f
 
 ### 2. `detectHandFrame()` — memvalidasi gesture dan mengambil 4 corner
 
-Setiap tangan harus membentuk **"L"** (sudut frame):
+Setiap tangan harus membentuk **"L"** (sudut frame). Aturannya **dua tingkat**:
 
-- telunjuk **terbuka**: jarak ujung telunjuk ↔ MCP-nya > 0.7 × panjang telapak,
-- jarak ujung jempol ↔ ujung telunjuk > 0.45 × panjang telapak (kedua jari membentuk sudut),
-- minimal **2 dari 3** jari lain (tengah/manis/kelingking) **terlipat**.
+| | ACQUIRE (sebelum lock) | TRACK (setelah lock) |
+| --- | --- | --- |
+| Jumlah landmark | 21 lengkap | cukup sampai ujung telunjuk (9) |
+| Jangkauan landmark dari pergelangan | ≤ 3.5 × telapak | ≤ 5 × telapak |
+| Jarak jempol ↔ telunjuk | > 0.25 × telapak | **tidak dicek** |
+| Telapak minimum | 8 px | 6 px |
 
-Syarat terakhir inilah yang menolak telapak terbuka (false positive) tanpa membuat gesture menjadi presisi. Semua threshold skala-relatif terhadap ukuran telapak, sehingga berfungsi sama baiknya untuk tangan dekat maupun jauh.
+Pemisahan ini krusial. Gesture L hanya syarat untuk **INITIAL LOCK** — setelah terkunci, jari boleh rileks, bentuk L boleh tidak sempurna, dan frame **tidak boleh putus** hanya karena gesture berubah (TEST 12). Yang tetap dicek setelah lock adalah apakah keempat landmark masih masuk akal (anti-teleport), bukan apakah user masih membentuk L.
 
 Setiap tangan yang valid memberikan **dua corner**: ujung jempol dan ujung telunjuk. Dua tangan → **empat corner**. Corner di-sort secara angular terhadap centroid-nya sehingga selalu membentuk poligon simple. **Tidak ada posisi frame yang di-hardcode** — posisi, ukuran, dan rotasi murni mengikuti tangan.
 
@@ -184,7 +188,7 @@ Validasi sekarang berjalan langsung pada **quadrilateral** yang dibentuk ujung j
 | Sisi minimum | ≥ 6% dari sisi video terpendek | `"too-narrow"` (sliver) |
 | Aspek rasio | ≤ 3.4 : 1 | `"too-narrow"` (mis. satu tangan saja) |
 
-Kemudian ada **hysteresis** agar frame tidak berkedip: perlu **2 frame valid** berturut-turut untuk ACTIVE, dan **4 frame invalid** berturut-turut untuk kembali INACTIVE.
+Kemudian ada **hysteresis** agar frame tidak berkedip: perlu **2 frame valid** berturut-turut untuk LOCK, dan **frame tidak pernah dilepas hanya karena invalid** — lihat aturan release di §6.
 
 ### 5. Face tracking — fitur sekunder
 
@@ -196,10 +200,15 @@ Kemudian ada **hysteresis** agar frame tidak berkedip: perlu **2 frame valid** b
 
 Inilah inti perubahan dari versi sebelumnya. Media **full-screen** dipotong sesuai bentuk tangan:
 
-1. `CornerSmoother` menghaluskan keempat corner secara independen (exponential smoothing, τ ≈ 60 ms, **snap instan pada frame pertama**). Karena tiap corner dilacak terpisah, window **tetap bisa trapezoid/asimetris** — tidak ditarik kembali ke rectangle.
+1. `StickyFrameTracker` (`lib/frameTracker.ts`) melacak keempat corner sebagai **satu objek**:
+   - tiap corner dihaluskan ke arah ujung jarinya masing-masing (exponential smoothing, τ ≈ 60 ms, **snap instan pada frame pertama**); corner dipasangkan ke corner sebelumnya berdasarkan jarak terdekat, jadi window **tetap bisa trapezoid/asimetris** dan polygon tidak bisa flip saat frame dimiringkan;
+   - lompatan corner dikunci ke ≤ 40% diagonal window (anti-teleport);
+   - saat deteksi hilang, window **tidak membeku** — meluncur sepanjang kecepatan terakhirnya (velocity prediction, meluruh 0.8× per frame), menahan hingga `maxMissedFrames` (8) frame gagal.
 2. `clipPathPolygon()` di `lib/stage.ts` mengonversi 4 corner menjadi `polygon(...)` dalam persen stage, dengan mirror.
 3. `MediaLayer` menerapkan itu sebagai `clip-path` pada elemen media full-screen (`object-fit: cover`). Media **tidak pernah di-scale masuk frame** — frame adalah jendela, bukan container.
 4. `HandFrame` men-reference polygon SVG yang sama persis (`vector-effect: non-scaling-stroke`) sehingga outline selalu sejajar dengan tepi window.
+
+**Kapan frame boleh lepas?** Hanya saat `StickyFrameTracker.state === "lost"` — yaitu kedua tangan benar-benar hilang selama lebih dari `maxMissedFrames` frame. Frame miring, trapezoid, asimetris, atau satu frame detection gagal **tidak pernah** melepas selection. State machine-nya `SEARCHING → CANDIDATE → LOCKED → RELEASING → SEARCHING` (`lib/selection.ts`).
 
 **Mengapa `clip-path` dan bukan canvas compositing:** GPU-accelerated, tidak ada salinan tekstur per frame, dan media apapun (SVG/PNG/GIF/video) langsung bekerja tanpa decoding manual.
 

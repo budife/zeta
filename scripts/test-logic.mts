@@ -4,7 +4,7 @@
  */
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
-import { CornerSmoother, RectSmoother, normalizeAngle, planCornerFrame, FORMING_HOLD_FRAMES } from "../lib/smoothing";
+import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import {
   clipPathPolygon,
   mediaMatrix,
@@ -30,6 +30,7 @@ import {
 } from "../lib/regions";
 import {
   advanceSelection,
+  selectionIsActive,
   INITIAL_SELECTION,
   SELECTION_CONFIG,
 } from "../lib/selection";
@@ -248,24 +249,72 @@ console.log("\n[6] face in selection");
   check("face box computed", box !== null && box.width > 0 && box.height > 0, JSON.stringify(box));
 }
 
-console.log("\n[8] smoother snaps then converges, handles 180deg symmetry");
+console.log("\n[8] sticky tracker snaps, then eases toward the target");
 {
-  const s = new RectSmoother();
-  const first = s.update({ cx: 100, cy: 100, width: 200, height: 100, rotation: 10 }, 0.016);
-  check("snap on first frame", Math.abs(first.cx - 100) < 0.001 && Math.abs(first.rotation - 10) < 0.001);
-  const next = s.update({ cx: 200, cy: 100, width: 200, height: 100, rotation: 10 }, 0.016);
-  check("moves toward target", next.cx > 100 && next.cx < 200, `cx=${next.cx.toFixed(1)}`);
-  const far = s.update({ cx: 200, cy: 100, width: 200, height: 100, rotation: 170 }, 0.016);
-  check("170deg treated as -10deg equivalent", Math.abs(far.rotation) < 60, `rot=${far.rotation.toFixed(1)}`);
+  const t = new StickyFrameTracker();
+  const first = t.update(
+    [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    0.016
+  );
+  check("snap on first frame", first.length === 4 && Math.abs(first[0].x) < 0.001 && Math.abs(first[2].y - 100) < 0.001, JSON.stringify(first));
+
+  const next = t.update(
+    [{ x: 10, y: 0 }, { x: 110, y: 0 }, { x: 110, y: 100 }, { x: 10, y: 100 }],
+    0.016
+  );
+  check("corners ease toward target, not all the way", next[0].x > 0 && next[0].x < 10, `x=${next[0].x.toFixed(2)}`);
+  check("state is tracking while hands are seen", t.state === "tracking", t.state);
+  check("missed is zero while tracking", t.missedFrames === 0, `${t.missedFrames}`);
+
+  t.reset();
+  const afterReset = t.update(
+    [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    0.016
+  );
+  check("reset snaps again", afterReset.every((p) => Math.abs(p.y) < 0.001 || Math.abs(p.y - 100) < 0.001), JSON.stringify(afterReset));
+
+  // A short/degenerate input is a MISS, not a passthrough that corrupts the
+  // window: the spec forbids `corners = []` on a single bad frame.
+  const bad = t.update([{ x: 0, y: 0 }, { x: 1, y: 1 }], 0.016);
+  check("degenerate input keeps the last window", bad.length === 4, JSON.stringify(bad));
+  check("missed increments", t.missedFrames === 1, `${t.missedFrames}`);
+  check("state degrades to holding", t.state === "holding", t.state);
 }
 
-console.log("\n[9] normalizeAngle stays in (-90, 90]");
+console.log("\n[9] sticky tracker pairs corners, so a tilt rotates instead of flipping");
 {
-  check("91 -> -89", normalizeAngle(91) === -89, `${normalizeAngle(91)}`);
-  check("-91 -> 89", normalizeAngle(-91) === 89, `${normalizeAngle(-91)}`);
-  check("0 -> 0", normalizeAngle(0) === 0);
-  check("360 -> 0", normalizeAngle(360) === 0, `${normalizeAngle(360)}`);
-  check("270 -> 90 (270 equals 90 mod 180)", normalizeAngle(270) === 90, `${normalizeAngle(270)}`);
+  const t = new StickyFrameTracker();
+  const base = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  t.update(base, 0.016);
+
+  // The same window rotated 30 degrees: nearest-corner pairing must keep each
+  // corner on the same fingertip, so the polygon rotates as one object.
+  const rad = (30 * Math.PI) / 180;
+  const rot = base.map((p) => {
+    const dx = p.x - 50;
+    const dy = p.y - 50;
+    return {
+      x: 50 + dx * Math.cos(rad) - dy * Math.sin(rad),
+      y: 50 + dx * Math.sin(rad) + dy * Math.cos(rad),
+    };
+  });
+  const rotated = t.update(rot, 0.016);
+  // A 30 deg rotation moves each corner ~37px. A corner-swap (the flip the
+  // spec warns about) would move two corners the full side length, ~100px.
+  const worst = Math.max(...rotated.map((p, i) => Math.hypot(p.x - base[i].x, p.y - base[i].y)));
+  check("no corner swapped identity", worst < 60, `worst=${worst.toFixed(1)}`);
+
+  // A trapezoid stays a trapezoid: corners ease independently and are never
+  // pulled back to a rectangle.
+  t.reset();
+  const trapTarget = [
+    { x: 40, y: 0 }, { x: 60, y: 0 }, { x: 120, y: 100 }, { x: -20, y: 100 },
+  ];
+  let trap = t.update(trapTarget, 0.016);
+  for (let i = 0; i < 60; i++) trap = t.update(trapTarget, 0.016);
+  const topW = Math.hypot(trap[1].x - trap[0].x, trap[1].y - trap[0].y);
+  const botW = Math.hypot(trap[2].x - trap[3].x, trap[2].y - trap[3].y);
+  check("trapezoid shape preserved", Math.abs(topW - botW) > 30, `top=${topW.toFixed(1)} bot=${botW.toFixed(1)}`);
 }
 
 console.log("\n[10] empty hands / degenerate inputs");
@@ -391,37 +440,25 @@ console.log("\n[12] quadrilateral tolerance (window may be skewed)");
   check("empty rejected", !isValidQuad([], W, H).valid);
 }
 
-console.log("\n[13] CornerSmoother tracks quadrilaterals");
+console.log("\n[13] sticky tracker clamps a teleport instead of trusting it");
 {
-  const s = new CornerSmoother();
-  const first = s.update(
-    [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
-    0.016
-  );
-  check("snap on first frame", first.length === 4 && Math.abs(first[0].x) < 0.001 && Math.abs(first[2].y - 100) < 0.001, JSON.stringify(first));
+  const t = new StickyFrameTracker();
+  const base = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  t.update(base, 0.016);
 
-  const next = s.update(
-    [{ x: 10, y: 0 }, { x: 110, y: 0 }, { x: 110, y: 100 }, { x: 10, y: 100 }],
-    0.016
-  );
-  check("corners move toward target", next[0].x > 0 && next[0].x < 10, `x=${next[0].x.toFixed(2)}`);
-
-  // A trapezoid stays a trapezoid: the smoothed corners must not snap to a rectangle.
-  const trapTarget = [
-    { x: 40, y: 0 }, { x: 60, y: 0 }, { x: 120, y: 100 }, { x: -20, y: 100 },
-  ];
-  const trap = s.update(trapTarget, 0.016);
-  const topW = Math.hypot(trap[1].x - trap[0].x, trap[1].y - trap[0].y);
-  const botW = Math.hypot(trap[2].x - trap[3].x, trap[2].y - trap[3].y);
-  check("trapezoid shape preserved", Math.abs(topW - botW) > 5, `top=${topW.toFixed(1)} bot=${botW.toFixed(1)}`);
-
-  s.reset();
-  const afterReset = s.update(trapTarget, 0.016);
-  check("reset snaps again", afterReset.every((p, i) => Math.abs(p.x - trapTarget[i].x) < 0.001 && Math.abs(p.y - trapTarget[i].y) < 0.001), JSON.stringify(afterReset));
-
-  // Non-quad input passes through untouched (defensive).
-  const bad = s.update([{ x: 0, y: 0 }, { x: 1, y: 1 }], 0.016);
-  check("non-quad passthrough", bad.length === 2, JSON.stringify(bad));
+  // The whole window "teleports" 500px right in one frame. Diagonal is ~141,
+  // so the clamp caps a single corner's step at 0.4 * 141 ~= 56px, and easing
+  // only closes a fraction of that. Measured at the centroid — the corners get
+  // re-paired under a shift, so per-index comparison is meaningless — the
+  // unclamped centroid would jump 500 * alpha ~= 117px in this one frame.
+  const tele = base.map((p) => ({ x: p.x + 500, y: p.y }));
+  const out = t.update(tele, 0.016);
+  const cx0 = base.reduce((s, p) => s + p.x, 0) / 4;
+  const cx1 = out.reduce((s, p) => s + p.x, 0) / 4;
+  const moved = Math.abs(cx1 - cx0);
+  const limit = TRACK_CONFIG.maxJumpFraction * Math.hypot(100, 100);
+  check("window not yanked by a teleport", moved <= limit, `moved=${moved.toFixed(1)} limit=${limit.toFixed(1)}`);
+  check("but it did start moving", moved > 0, `moved=${moved.toFixed(1)}`);
 }
 
 console.log("\n[14] clip-path polygon mapping");
@@ -715,7 +752,7 @@ console.log("\n[20] candidate tolerates short noise (TEST E)");
   );
 
   // TEST E: one frame of tracking dropout while locked keeps last corners
-  // (engine holds cornerSmoother.value — phase must stay locked).
+  // (engine holds the sticky tracker's last window — phase must stay locked).
   s = advanceSelection(INITIAL_SELECTION, valid);
   s = advanceSelection(s.state, valid);
   check("locked", s.state.phase === "locked", s.state.phase);
@@ -983,28 +1020,141 @@ console.log("\n[25] hand validation uses all 21 landmarks, not just the two tips
   check("coherent hand yields 4 corners", detC.corners.length === 4, detC.reason);
 }
 
-console.log("\n[26] corner feed plan — smooth while forming, hold, then clear");
+console.log("\n[26] sticky window — hold through dropouts, predict, then lose");
 {
-  // Valid corners: always feed the smoother, and reset the hold counter.
-  check("valid -> feed", planCornerFrame(0, true, false).feed === true);
-  check("valid -> no clear", planCornerFrame(0, true, false).clear === false);
-  check("valid -> hold resets", planCornerFrame(4, true, false).held === 0);
+  const t = new StickyFrameTracker();
+  const base = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  t.update(base, 0.016);
 
-  // Detection blinks while forming: hold, never clear on the first frames —
-  // the dots must not snap to empty the instant a landmark drops out.
-  const first = planCornerFrame(0, false, false);
-  check("forming dropout holds", first.clear === false && first.held === 1);
+  // Hands carried to the right at 625 px/s, then tracking drops out mid-motion.
+  let moving = base.map((p) => ({ ...p }));
+  for (let i = 0; i < 10; i++) {
+    moving = moving.map((p) => ({ x: p.x + 10, y: p.y }));
+    t.update(moving, 0.016);
+  }
+  const lastX = t.value[0].x;
+
+  // TEST 8: a 1-3 frame dropout must not flicker the window.
+  for (let i = 0; i < 3; i++) t.update(null, 0.016);
+  check("3-frame dropout still holds 4 corners", t.value.length === 4, JSON.stringify(t.value));
+  check("state holding, not lost", t.state === "holding", t.state);
+
+  // PREDICTION: the window keeps coasting the way the hands were going instead
+  // of freezing the instant detection drops.
   check(
-    `forming holds ${FORMING_HOLD_FRAMES} frames, clears on the next`,
-    [0, 1, 2].every((h) => planCornerFrame(h, false, false).clear === false) &&
-      planCornerFrame(FORMING_HOLD_FRAMES, false, false).clear === true
+    "window keeps moving during dropout",
+    t.value[0].x > lastX,
+    `x ${lastX.toFixed(1)} -> ${t.value[0].x.toFixed(1)}`
   );
 
-  // Selection live: hold indefinitely — the window must never blink; the
-  // selection machine decides when to deactivate and reset it.
-  const live = planCornerFrame(FORMING_HOLD_FRAMES + 10, false, true);
-  check("live selection never clears", live.clear === false);
-  check("live selection still counts", live.held === FORMING_HOLD_FRAMES + 11);
+  // Recovery resets the miss counter and resumes tracking.
+  t.update(moving, 0.016);
+  check("recovery clears the miss count", t.missedFrames === 0 && t.state === "tracking", `${t.missedFrames}/${t.state}`);
+
+  // TEST 9/10: only staying blind past the budget loses the window.
+  for (let i = 0; i < TRACK_CONFIG.maxMissedFrames; i++) t.update(null, 0.016);
+  check("at the budget the window is still published", t.value.length === 4 && t.state !== "lost", `${t.state}`);
+  t.update(null, 0.016);
+  check("past the budget -> lost", t.state === "lost", t.state);
+  // `lost` still publishes the last position: releasing the selection is the
+  // state machine's decision, and the RELEASING tail needs something to fade.
+  check("lost keeps the last position", t.value.length === 4, JSON.stringify(t.value));
+}
+
+console.log("\n[28] gesture tiers — locked hands are never re-checked for an L");
+{
+  const other = hand({ x: 900, y: 560 }, { x: 640, y: 560 }, 70);
+
+  // One landmark jittered to 4.2 palm-lengths from the wrist: inside the
+  // tracking bound (5) but outside the acquisition bound (3.5). The thumb and
+  // index tips themselves are untouched.
+  const jittered = hand({ x: 300, y: 180 }, { x: 560, y: 180 }, 70);
+  jittered[12] = { x: jittered[0].x + 4.2 * 70, y: jittered[0].y, z: 0 };
+
+  const detAcquire = detectHandFrame([toNorm(jittered), toNorm(other)], W, H, "acquire");
+  check("acquire rejects the jittered hand", detAcquire.corners.length === 0, detAcquire.reason);
+  check(
+    "acquire reason is the reach check",
+    detAcquire.gestures[0].reason === "landmark-out-of-reach",
+    detAcquire.gestures[0].reason
+  );
+
+  const detTrack = detectHandFrame([toNorm(jittered), toNorm(other)], W, H, "track");
+  check("track still reads the same anchors", detTrack.corners.length === 4, detTrack.reason);
+  check(
+    "track corners land on the same tips as a clean hand would",
+    detectHandFrame([toNorm(hand({ x: 300, y: 180 }, { x: 560, y: 180 }, 70)), toNorm(other)], W, H)
+      .corners.every((p, i) => Math.hypot(p.x - detTrack.corners[i].x, p.y - detTrack.corners[i].y) < 0.001),
+    JSON.stringify(detTrack.corners)
+  );
+
+  // Track mode also tolerates a hand that lost landmarks — a hand shorter than
+  // 21 points but still long enough to carry an index tip stays usable.
+  const truncated = hand({ x: 300, y: 180 }, { x: 560, y: 180 }, 70).slice(0, 15);
+  const detTrunc = detectHandFrame([toNorm(truncated), toNorm(other)], W, H, "track");
+  check("track tolerates a truncated hand", detTrunc.corners.length === 4, detTrunc.gestures[0].reason);
+  const detTruncAcq = detectHandFrame([toNorm(truncated), toNorm(other)], W, H, "acquire");
+  check("acquire still demands a full hand", detTruncAcq.corners.length === 0, detTruncAcq.gestures[0].reason);
+}
+
+console.log("\n[29] sticky lock end-to-end — acquire, lock, dropout, release");
+{
+  // Replicates the engine's per-frame rule so the behaviour is proved, not
+  // just the pieces. This is the acceptance-test matrix (TEST 8/10/12).
+  const tracker = new StickyFrameTracker();
+  let selection = INITIAL_SELECTION;
+  const step = (landmarks) => {
+    const wasActive = selectionIsActive(selection.phase);
+    const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(det.corners, W, H);
+    const hasCorners = det.corners.length === 4;
+    const usable = hasCorners && validity.valid;
+    tracker.update(usable ? det.corners : null, 0.016);
+    if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+    const advance = advanceSelection(selection, {
+      valid: wasActive ? tracker.state !== "lost" : usable,
+      hasCorners,
+    });
+    selection = advance.state;
+    if (advance.deactivated) tracker.reset();
+    return { phase: selection.phase, window: tracker.value };
+  };
+
+  const mk = (tl, br, spread) => [
+    toNorm(hand(tl, { x: tl.x + spread, y: tl.y }, 70)),
+    toNorm(hand(br, { x: br.x - spread, y: br.y }, 70)),
+  ];
+  const good = mk({ x: 300, y: 180 }, { x: 900, y: 560 }, 260);
+
+  // TEST 1: two L hands -> the window locks.
+  step(good);
+  const locked = step(good);
+  check("frame locks on a real gesture", selectionIsActive(locked.phase), locked.phase);
+  check("window has 4 corners", locked.window.length === 4, JSON.stringify(locked.window));
+
+  // TEST 12: the user stops holding a perfect L (thumb/index no longer spread
+  // wide, but both tips still plainly visible). The frame must stay connected.
+  const relaxed = mk({ x: 300, y: 180 }, { x: 900, y: 560 }, 90);
+  const afterRelax = step(relaxed);
+  check("relaxed fingers keep the lock", selectionIsActive(afterRelax.phase), afterRelax.phase);
+  check("window still follows the hands", afterRelax.window.length === 4, JSON.stringify(afterRelax.window));
+
+  // TEST 8: both hands leave the frame for 3 ticks — no unlock, no flicker.
+  for (let i = 0; i < 3; i++) step([]);
+  const afterDrop = step([]);
+  check("3-frame dropout keeps the lock", selectionIsActive(afterDrop.phase), afterDrop.phase);
+  check("window survived the dropout", afterDrop.window.length === 4, JSON.stringify(afterDrop.window));
+
+  // Hands return; tracking resumes without a fresh SEARCHING round trip.
+  step(good);
+  check("recovery stays locked", selectionIsActive(step(good).phase), selection.phase);
+
+  // TEST 10: sustained blindness past the grace budget is the one thing that
+  // releases — and it releases smoothly, never on the first failed frame.
+  for (let i = 0; i < 25; i++) step([]);
+  const released = step([]);
+  check("sustained dropout releases to searching", released.phase === "searching", released.phase);
+  check("released window is cleared", released.window === null, JSON.stringify(released.window));
 }
 
 console.log("\n[27] pose skeleton topology — all 33 joints connected");

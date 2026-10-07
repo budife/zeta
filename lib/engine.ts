@@ -20,7 +20,8 @@ import {
 } from "./selection";
 import { calculateFrame, detectHandFrame, isValidQuad } from "./handFrame";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
-import { RectSmoother, CornerSmoother, planCornerFrame, smoothingAlpha } from "./smoothing";
+import { smoothingAlpha } from "./smoothing";
+import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
 import {
   advanceRegion,
   classifyRegion,
@@ -105,10 +106,13 @@ export class HandFrameEngine {
   private fpsEma = 0;
   private lastFrameAt = 0;
 
-  private frameSmoother = new RectSmoother();
-  private cornerSmoother = new CornerSmoother();
-  /** Frames the corner smoother has been held without valid corners. */
-  private cornerHeld = 0;
+  /**
+   * The sticky window tracker. Owns the four corners as one object: smooths
+   * them while the hands are visible, coasts them along their last velocity
+   * through short dropouts, and reports `lost` only when the hands have been
+   * gone long enough to release the selection.
+   */
+  private tracker = new StickyFrameTracker();
 
   private selection: SelectionState = INITIAL_SELECTION;
 
@@ -302,9 +306,7 @@ export class HandFrameEngine {
     this.lastFaceAt = 0;
     this.faceState = "none";
     this.regionLock = { kind: null, label: "—", confidence: 0 };
-    this.frameSmoother.reset();
-    this.cornerSmoother.reset();
-    this.cornerHeld = 0;
+    this.tracker.reset();
     this.patchStatus({
       camera: "off",
       hands: 0,
@@ -367,57 +369,59 @@ export class HandFrameEngine {
     const height = video.videoHeight;
 
     // ---------------------------------------------------------- hand frame
+    // Gesture strictness depends on phase: full strictness while SEARCHING /
+    // CANDIDATE (the user must mean the frame), forgiving once LOCKED — the L
+    // is never re-validated after lock, only the anchors need to stay readable.
+    const wasActive = selectionIsActive(this.selection.phase);
     const handResult = this.handLandmarker.detectForVideo(video, timestamp);
     const detection: HandFrameDetection = detectHandFrame(
       handResult.landmarks,
       width,
-      height
+      height,
+      wasActive ? "track" : "acquire"
     );
     const rawFrame = calculateFrame(detection.corners);
     const validity = isValidQuad(detection.corners, width, height);
     const hasCorners = detection.corners.length === 4;
+    const usable = hasCorners && validity.valid;
 
+    // The tracker is fed BEFORE the selection machine reads its state, so the
+    // state describes this frame. Only usable corners are fed; a frame where
+    // the hands are present but the shape is degenerate counts as a miss, and
+    // the window holds its last good shape instead of collapsing.
+    this.tracker.update(usable ? detection.corners : null, dt);
+    // While still FORMING the window is not yet a selection, so stale dots are
+    // cleared shortly after the hands leave. A live selection holds for the
+    // full grace budget — the machine, not the tracker, decides when it ends.
+    if (!wasActive && this.tracker.missedFrames > FORMING_HOLD_FRAMES) {
+      this.tracker.reset();
+    }
+    const windowCorners = this.tracker.value ?? [];
+
+    // RELEASE RULE: while locked, the selection is only invalid when the
+    // tracker has given up — i.e. the hands were genuinely gone for
+    // maxMissedFrames. A tilted, trapezoid, or momentarily misread frame never
+    // counts toward release on its own. While acquiring, the strict quad check
+    // still gates the initial lock.
     const advance = advanceSelection(this.selection, {
-      valid: validity.valid && hasCorners,
+      valid: wasActive ? this.tracker.state !== "lost" : usable,
       hasCorners,
     });
     this.selection = advance.state;
     const active = selectionIsActive(this.selection.phase);
 
     if (advance.deactivated) {
-      this.frameSmoother.reset();
-      this.cornerSmoother.reset();
-      this.cornerHeld = 0;
+      this.tracker.reset();
       this.lastFaceBox = null;
       this.faceState = "none";
       this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     }
 
-    // Corners are smoothed from the FORMING stage onward — never raw →
-    // rendered — and a detection blink holds the last position for a few
-    // frames instead of emptying instantly (see planCornerFrame). The window
-    // is published whether or not the selection is active; every consumer
-    // gates the visible clip on `frameActive`.
-    const plan = planCornerFrame(
-      this.cornerHeld,
-      hasCorners && validity.valid,
-      active
-    );
-    this.cornerHeld = plan.held;
-    if (plan.clear) this.cornerSmoother.reset();
-    if (plan.feed) this.cornerSmoother.update(detection.corners, dt);
-    const windowCorners = this.cornerSmoother.value ?? [];
-
+    // The fitted rect is derived from the same corners the clip uses — one
+    // source of truth, no second smoother adding its own lag on top.
     let frame: FrameRect | null = null;
-    if (active) {
-      if (hasCorners && validity.valid) {
-        if (rawFrame) frame = this.frameSmoother.update(rawFrame, dt);
-      } else {
-        // Temporary dropout: hold the last smoothed rectangle instead of
-        // blanking it. The smoothers keep their state, so nothing snaps when
-        // detection returns.
-        frame = this.frameSmoother.value;
-      }
+    if (active && windowCorners.length === 4) {
+      frame = calculateFrame(windowCorners);
     }
 
     // --------------------------------------------------------------- face
@@ -526,6 +530,8 @@ export class HandFrameEngine {
       corners: detection.corners,
       windowCorners,
       frameActive: active,
+      selectionPhase: this.selection.phase,
+      missedFrames: this.tracker.missedFrames,
       region: this.regionLock,
       regionTransform,
       faceAlign: active ? this.faceAlign : null,

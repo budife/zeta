@@ -8,6 +8,7 @@
  */
 
 import type { RegionKind } from "./regions";
+import type { SelectionPhase } from "./selection";
 
 /** A point in video-pixel space. */
 export type Point = { x: number; y: number };
@@ -93,7 +94,10 @@ export type Snapshot = {
   handLandmarksNorm: NormalizedLandmark[][];
   /** Candidate frame before smoothing (preview), null when not estimable. */
   rawFrame: FrameRect | null;
-  /** Smoothed, active frame — null while the frame is inactive. */
+  /**
+   * The fitted oriented rectangle of the ACTIVE window, derived each frame from
+   * `windowCorners` so the two can never disagree. Null while inactive.
+   */
   frame: FrameRect | null;
   /** Face bounding box, null when no face was found this frame. */
   faceBox: Box | null;
@@ -103,14 +107,16 @@ export type Snapshot = {
   /** The four raw frame corners (fingertips), empty when unavailable. */
   corners: Point[];
   /**
-   * The four corners of the hand-made window after smoothing, in video-pixel
-   * space. Populated whether the selection is forming or active — this is the
-   * single source the yellow dots and the clip-path both read, so they can
-   * never disagree. It holds its last position for a few frames when
-   * detection blinks instead of emptying instantly, and empties only when the
-   * selection deactivates. Unlike `frame` this is the actual quadrilateral the
-   * hands form, so it may be trapezoid or asymmetric. Gating the *visible*
-   * clip on `frameActive` is what keeps it hidden while merely forming.
+   * The four corners of the hand-made window, in video-pixel space — the single
+   * source the yellow dots and the clip-path both read, so they can never
+   * disagree. Produced by the sticky tracker (`lib/frameTracker.ts`): eased
+   * toward the fingertips while the hands are seen, and coasted along its last
+   * velocity through short detection dropouts instead of freezing or
+   * vanishing. Populated while the selection is forming or active, and cleared
+   * only when the selection deactivates or the forming window gives up. Unlike
+   * `frame` this is the actual quadrilateral the hands form, so it may be
+   * trapezoid or asymmetric. Gating the *visible* clip on `frameActive` is what
+   * keeps it hidden while merely forming.
    */
   windowCorners: Point[];
   /**
@@ -119,6 +125,19 @@ export type Snapshot = {
    * detection dropout never blanks the layer.
    */
   frameActive: boolean;
+  /**
+   * The selection machine's phase this frame. Debug-only readout; the spec
+   * wants SEARCHING / CANDIDATE / LOCKED / RELEASING visible while tuning the
+   * sticky-lock behaviour. `frameActive` is derived from it and is what the
+   * renderers actually gate on.
+   */
+  selectionPhase: SelectionPhase;
+  /**
+   * Consecutive frames the window tracker has gone without usable corners.
+   * Zero while tracking; counts up through the grace budget while holding; the
+   * frame releases once it passes `TRACK_CONFIG.maxMissedFrames`.
+   */
+  missedFrames: number;
   /**
    * Which body part the hand-made window is framing. `kind` is null while the
    * frame is inactive or the classifier is not confident enough — the renderer
