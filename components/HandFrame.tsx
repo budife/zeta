@@ -8,24 +8,28 @@ export type HandFrameProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
   active: boolean;
   /**
-   * Debug only: the fitted candidate rectangle and the blue outline polygon.
-   * In production the UI shows nothing but the four yellow fingertip dots.
+   * Debug only. This whole component is a diagnostic layer: when it is off,
+   * nothing renders at all and no subscription runs. The hand-made window
+   * itself is drawn by `MediaLayer`'s clip-path, which does not depend on this
+   * component — so hiding the markers never touches tracking.
    */
   debug?: boolean;
 };
 
 /**
- * Draws the hand-made selection.
+ * Debug overlay for the hand-made selection: the four yellow fingertip dots,
+ * the fitted candidate rectangle, and the outline of the clipped quadrilateral.
  *
- * Production (debug off): exactly four yellow dots, one per fingertip corner
- * (thumb + index of each hand). The dots follow `windowCorners` — the SAME
- * smoothed corners the clip-path uses — in both states, so they sit on the
- * visible edge of the window once active and are already smoothed while the
- * window is still forming (never raw → rendered).
+ * Every visual here is debug-only. With debug off the component renders
+ * nothing and subscribes to nothing — not merely opacity-hidden, so no debug
+ * element can ever participate in layout or hit-testing in production. The
+ * window itself keeps working: `MediaLayer` clips to the same `windowCorners`
+ * independently.
  *
- * Debug: additionally the fitted candidate rectangle (dashed) and the outline
- * of the clipped quadrilateral. No dashed blue line is ever rendered in
- * production.
+ * The dots follow `windowCorners` — the SAME corners the clip-path uses — in
+ * both states, so they sit on the visible edge of the window once active and
+ * are already smoothed while the window is still forming (never raw →
+ * rendered).
  */
 export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) {
   const candidateRef = useRef<HTMLDivElement | null>(null);
@@ -33,12 +37,13 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
   const cornerRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   useEffect(() => {
+    if (!debug) return;
     const off = subscribe((snapshot) => {
       const { rawFrame, windowCorners, videoWidth, videoHeight } = snapshot;
 
-      // Debug-only candidate: fitted rectangle preview while forming.
+      // Candidate: fitted rectangle preview while forming.
       if (candidateRef.current) {
-        if (debug && rawFrame && !active) {
+        if (rawFrame && !active) {
           Object.assign(
             candidateRef.current.style,
             placeFrame(rawFrame, videoWidth, videoHeight)
@@ -49,9 +54,9 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
         }
       }
 
-      // Debug-only outline: stroke the exact polygon the media is clipped to.
+      // Outline: stroke the exact polygon the media is clipped to.
       if (outlineRef.current) {
-        if (debug && active && windowCorners.length === 4) {
+        if (active && windowCorners.length === 4) {
           outlineRef.current.setAttribute(
             "points",
             windowCorners
@@ -67,12 +72,11 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
         }
       }
 
-      // Four fingertip dots — always rendered, never dashed, never blue.
-      // One source: the smoothed corners the clip uses, in both states.
-      const dotPoints = windowCorners;
+      // Four fingertip dots — never dashed, never blue. One source: the
+      // smoothed corners the clip uses, in both states.
       cornerRefs.current.forEach((el, i) => {
         if (!el) return;
-        const corner = dotPoints[i];
+        const corner = windowCorners[i];
         if (!corner) {
           el.style.opacity = "0";
           return;
@@ -85,6 +89,8 @@ export function HandFrame({ subscribe, active, debug = false }: HandFrameProps) 
     });
     return off;
   }, [subscribe, active, debug]);
+
+  if (!debug) return null;
 
   return (
     <div className="hand-frame-layer" aria-hidden="true">
