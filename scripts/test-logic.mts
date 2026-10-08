@@ -40,6 +40,7 @@ import {
   handFrameAllowed,
   INITIAL_MODE,
 } from "../lib/modes";
+import { SwipeTracker, SWIPE_CONFIG } from "../lib/swipe";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
 import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
@@ -1358,6 +1359,105 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
   }
   check("resumes as FRAME_LOCKED without a fresh L", g === "FRAME_LOCKED", g);
   check("the lock itself was never broken", selection.phase === "locked", selection.phase);
+}
+
+console.log("\n[31] swipe detector — 2-finger flicks, dominant axis, mirror-aware (TEST 3)");
+{
+  /** Index+middle extended, ring+pinky folded: the 2-finger swipe sign. */
+  const peace = (thumbTip, indexTip, palm = 60) => {
+    const p = hand(thumbTip, indexTip, palm);
+    const towardWrist = (pip) => ({
+      x: p[0].x + (pip.x - p[0].x) * 0.9,
+      y: p[0].y + (pip.y - p[0].y) * 0.9,
+      z: 0,
+    });
+    p[16] = towardWrist(p[14]); // ring tip sits nearer the wrist than its PIP
+    p[20] = towardWrist(p[18]); // pinky likewise
+    return p;
+  };
+  const at = (base, dx, dy) => base.map((p) => ({ x: p.x + dx, y: p.y + dy, z: 0 }));
+  /** Runs a translated-by-(vx,vy)-per-frame motion until an event fires. */
+  const swipe = (tracker, base, vx, vy, frames, startMs = 1000) => {
+    let fired = null;
+    for (let i = 0; i < frames && !fired; i++) {
+      fired = tracker.update(at(base, vx * i, vy * i), startMs + i * 16);
+    }
+    return fired;
+  };
+
+  // The peace sign sits at (640,360) in video pixels.
+  const sign = peace({ x: 600, y: 360 }, { x: 680, y: 360 }, 70);
+
+  // TEST 3: a quick 2-finger flick downward opens the menu.
+  const down = new SwipeTracker();
+  check("stationary peace sign fires nothing", down.update(sign, 999) === null);
+  check(
+    "flick down is a swipeDown",
+    swipe(down, sign, 0, 12, 40) === "swipeDown",
+    String(swipe(new SwipeTracker(), sign, 0, 12, 40))
+  );
+
+  // Mirror-aware direction: the preview is mirrored, so raw pixels moving to
+  // +x appear on screen as moving LEFT. A flick the user sees as leftward
+  // must read as swipeLeft — and the opposite raw direction must not fire.
+  const left = new SwipeTracker();
+  check(
+    "raw +x flick is a screen-left swipeLeft",
+    swipe(left, sign, 12, 0, 40) === "swipeLeft",
+    String(swipe(new SwipeTracker(), sign, 12, 0, 40))
+  );
+  check(
+    "raw -x flick (screen right) fires nothing",
+    swipe(new SwipeTracker(), sign, -12, 0, 40) === null
+  );
+
+  // Dominant axis: a diagonal wander is ambiguous, so it restarts instead of
+  // guessing a direction.
+  check(
+    "diagonal motion never fires",
+    swipe(new SwipeTracker(), sign, 12, 12, 40) === null
+  );
+
+  // The window expires old travel: a slow drift can never accumulate into a
+  // swipe however long it continues.
+  check(
+    "slow drift never fires",
+    swipe(new SwipeTracker(), sign, 1, 1, 60) === null
+  );
+
+  // Only the 2-finger sign swipes: an open palm (the frame's own L shape)
+  // moving the same distance must not open anything.
+  const openPalm = hand({ x: 600, y: 360 }, { x: 680, y: 360 }, 70);
+  check(
+    "open palm flick does not fire",
+    swipe(new SwipeTracker(), openPalm, 0, 12, 40) === null
+  );
+
+  // A gap in the hand (left the frame mid-flick) restarts the window: the
+  // flick is 96px in, just under the threshold — if the pre-gap samples
+  // survived, the next couple of frames would complete it.
+  const gap = new SwipeTracker();
+  let gapFired = null;
+  for (let i = 0; i < 9 && !gapFired; i++) gapFired = gap.update(at(sign, 0, 12 * i), 1000 + i * 16);
+  gap.update(null, 1144); // hand lost mid-flick
+  for (let i = 0; i < 4 && !gapFired; i++) gapFired = gap.update(at(sign, 0, 12 * i), 1160 + i * 16);
+  check("losing the hand restarts the window", gapFired === null, String(gapFired));
+
+  // Cooldown: one event, then a quiet period before the next can fire. The
+  // second flick runs entirely inside it (fires at t=1160, cooldown to 1860).
+  const cool = new SwipeTracker();
+  check("first flick fires", swipe(cool, sign, 0, 12, 40, 1000) === "swipeDown");
+  check(
+    "second flick inside the cooldown is swallowed",
+    swipe(cool, sign, 12, 0, 15, 1616) === null
+  );
+  check(
+    "a flick after the cooldown fires again",
+    swipe(cool, sign, 12, 0, 60, 2400) === "swipeLeft",
+    String(swipe(new SwipeTracker(), sign, 12, 0, 60, 2400))
+  );
+
+  check("config is tunable", SWIPE_CONFIG.minDistancePx > 0 && SWIPE_CONFIG.cooldownMs > 0);
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

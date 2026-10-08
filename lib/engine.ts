@@ -19,7 +19,15 @@ import {
   type SelectionState,
 } from "./selection";
 import { calculateFrame, detectHandFrame, isValidQuad } from "./handFrame";
-import { advanceMode, handFrameAllowed, INITIAL_MODE, type AppMode, type ModeEvent } from "./modes";
+import {
+  advanceMode,
+  gestureAllowed,
+  handFrameAllowed,
+  INITIAL_MODE,
+  type AppMode,
+  type ModeEvent,
+} from "./modes";
+import { SwipeTracker, SWIPE_CONFIG } from "./swipe";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -126,6 +134,9 @@ export class HandFrameEngine {
    * an item). Changed only through `dispatchMode`, so status stays in sync.
    */
   private mode: AppMode = INITIAL_MODE;
+
+  /** Two-finger swipe state — see lib/swipe.ts. Runs every frame. */
+  private swipeTracker = new SwipeTracker();
 
   private faceState: FaceState = "none";
   private lastFaceBox: Box | null = null;
@@ -337,6 +348,7 @@ export class HandFrameEngine {
     this.faceState = "none";
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.tracker.reset();
+    this.swipeTracker.reset();
     this.mode = INITIAL_MODE;
     this.patchStatus({
       camera: "off",
@@ -406,6 +418,40 @@ export class HandFrameEngine {
     // is never re-validated after lock, only the anchors need to stay readable.
     const wasActive = selectionIsActive(this.selection.phase);
     const handResult = this.handLandmarker.detectForVideo(video, timestamp);
+    // MediaPipe's raw hand output — the input side of the coordinate chain.
+    const rawHandLandmarks = handResult.landmarks ?? [];
+    const pixelHands = rawHandLandmarks.map((lm) => toPixelLandmarks(lm, width, height));
+
+    // --------------------------------------------------------------- swipe
+    // The detector runs every frame (its window/cooldown state must stay
+    // fresh) on the right hand only, picked by MediaPipe's handedness. The
+    // event is then consumed only where it cannot damage a frame: opening
+    // the menu FROM FRAME_LOCKED needs the geometry-preservation guard first
+    // (the peace sign collapses the right hand's frame anchors, so firing
+    // now would release the lock before the event lands — Slice G wires that
+    // leg together with TEST 11). swipeLeft is detected but not consumed
+    // yet: the reset path needs its RESETTING side effects first (Slice H).
+    let rightIndex = -1;
+    const handednesses = handResult.handednesses;
+    if (handednesses) {
+      for (let i = 0; i < handednesses.length; i++) {
+        if (handednesses[i]?.[0]?.categoryName === SWIPE_CONFIG.hand) {
+          rightIndex = i;
+          break;
+        }
+      }
+    }
+    const swipe = this.swipeTracker.update(
+      rightIndex >= 0 ? pixelHands[rightIndex] : null,
+      timestamp
+    );
+    if (
+      swipe === "swipeDown" &&
+      gestureAllowed(this.mode, "swipeDown") &&
+      this.mode !== "FRAME_LOCKED"
+    ) {
+      this.handleModeEvent({ type: "openMenu" });
+    }
 
     // MODE GATE (spec AK / TEST 1): frame formation runs only in FRAME_SEARCH
     // and FRAME_LOCKED. Landmarks are still detected everywhere (the debug
@@ -573,10 +619,8 @@ export class HandFrameEngine {
     // behind the clipping window without any zoom/pan. The classifier still
     // runs for the debug readout but does not affect rendering.
     const regionTransform = null as import("./regionMapping").RegionTransform | null;
-    // MediaPipe's raw hand output — the input side of the coordinate chain.
-    const rawHandLandmarks = handResult.landmarks ?? [];
     const snapshot: Snapshot = {
-      hands: rawHandLandmarks.map((lm) => toPixelLandmarks(lm, width, height)),
+      hands: pixelHands,
       handLandmarksNorm: rawHandLandmarks,
       rawFrame,
       frame,
