@@ -453,6 +453,17 @@ export class HandFrameEngine {
       this.handleModeEvent({ type: "openMenu" });
     }
 
+    // -------------------------------------------------------------- pointer
+    // Index fingertip of the pointing hand, in raw video pixels: the right
+    // hand when it is visible (spec: right-hand pointer), else any hand —
+    // the menu cursor should never go dead just because the preferred hand
+    // is out of frame. Consumed by the menu layer through the coordinate
+    // chain; publishing it in every mode keeps the debug overlay honest.
+    const pointerHand = rightIndex >= 0 ? rightIndex : pixelHands.length > 0 ? 0 : -1;
+    const pointerLm =
+      pointerHand >= 0 ? rawHandLandmarks[pointerHand][8] : null; // landmark 8 = index tip
+    const pointer = pointerLm ? { x: pointerLm.x * width, y: pointerLm.y * height } : null;
+
     // MODE GATE (spec AK / TEST 1): frame formation runs only in FRAME_SEARCH
     // and FRAME_LOCKED. Landmarks are still detected everywhere (the debug
     // overlay and, later, the menu pointer read them), but outside the frame
@@ -628,6 +639,7 @@ export class HandFrameEngine {
       faceInSelection: faceInFrame,
       faceLandmarks: faceLandmarksThisFrame,
       corners: detection.corners,
+      pointer,
       windowCorners,
       frameActive: active,
       selectionPhase: this.selection.phase,

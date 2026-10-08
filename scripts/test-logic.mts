@@ -41,6 +41,7 @@ import {
   INITIAL_MODE,
 } from "../lib/modes";
 import { SwipeTracker, SWIPE_CONFIG } from "../lib/swipe";
+import { HoverTracker, MENU_CONFIG, TOP_LEVEL_ITEMS } from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
 import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
@@ -1458,6 +1459,59 @@ console.log("\n[31] swipe detector — 2-finger flicks, dominant axis, mirror-aw
   );
 
   check("config is tunable", SWIPE_CONFIG.minDistancePx > 0 && SWIPE_CONFIG.cooldownMs > 0);
+}
+
+console.log("\n[32] menu dwell — hover highlights, hold 400ms selects (TEST 4 / 5)");
+{
+  // The pointer hover machine: an item lights up immediately (TEST 4) and
+  // only completes a selection after the configured hold (TEST 5).
+  const h = new HoverTracker();
+  let r = h.update("EFFECTS", 1000);
+  check("hovering an item highlights it", r.hover === "EFFECTS", JSON.stringify(r));
+  check("highlight alone selects nothing", r.selected === null, JSON.stringify(r));
+
+  r = h.update("EFFECTS", 1200);
+  check(
+    "hold progress tracks time",
+    Math.abs(r.progress - 200 / MENU_CONFIG.holdMs) < 1e-9 && r.selected === null,
+    JSON.stringify(r)
+  );
+
+  r = h.update("EFFECTS", 1000 + MENU_CONFIG.holdMs);
+  check("hold completes at holdMs", r.progress === 1 && r.selected === "EFFECTS", JSON.stringify(r));
+
+  r = h.update("EFFECTS", 1001 + MENU_CONFIG.holdMs);
+  check("the selection fires exactly once", r.selected === null && r.progress === 1, JSON.stringify(r));
+
+  // Leaving the item mid-hold cancels; re-entry starts a fresh hold.
+  const h2 = new HoverTracker();
+  h2.update("TEMPLATE", 0);
+  h2.update("TEMPLATE", 200);
+  h2.update(null, 250);
+  const reentered = h2.update("TEMPLATE", 300);
+  check(
+    "leaving mid-hold cancels, re-entry restarts",
+    reentered.hover === "TEMPLATE" && reentered.progress === 0 && reentered.selected === null,
+    JSON.stringify(reentered)
+  );
+
+  // Moving onto a different item mid-hold never credits the old item's time.
+  const h3 = new HoverTracker();
+  h3.update("TEMPLATE", 0);
+  h3.update("TEMPLATE", 300);
+  const switched = h3.update("MOTION", 320);
+  check(
+    "switching items restarts the hold on the new item",
+    switched.hover === "MOTION" && switched.progress === 0 && switched.selected === null,
+    JSON.stringify(switched)
+  );
+
+  check("default hold is the agreed 400ms", MENU_CONFIG.holdMs === 400, String(MENU_CONFIG.holdMs));
+  check(
+    "the three top-level entries are pinned",
+    TOP_LEVEL_ITEMS.join(",") === "TEMPLATE,EFFECTS,MOTION",
+    TOP_LEVEL_ITEMS.join(",")
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

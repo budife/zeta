@@ -116,6 +116,15 @@ export type Snapshot = {
   /** The four raw frame corners (fingertips), empty when unavailable. */
   corners: Point[];
   /**
+   * The menu pointer: the index fingertip (landmark 8) of the pointing hand,
+   * in raw video pixels (pre-mirror, like `hands`). The renderer runs it
+   * through the single coordinate chain — `toStageFraction`/`toStagePixels`
+   * — so it lands exactly where the finger appears on the mirrored preview.
+   * The engine prefers the right hand (spec: right-hand pointer) and falls
+   * back to any visible hand. Null when no hand is visible.
+   */
+  pointer: Point | null;
+  /**
    * The four corners of the hand-made window, in video-pixel space — the single
    * source the yellow dots and the clip-path both read, so they can never
    * disagree. Produced by the sticky tracker (`lib/frameTracker.ts`): eased
