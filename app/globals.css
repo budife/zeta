@@ -346,46 +346,51 @@ button {
 /* blur — smears the media, contained by the window's clip-path */
 .fx--blur {
   display: block;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
-/* rain — slanted streaks sliding down; the 60px gradient period is matched
-   by the 59px translateY so the loop seam is invisible */
+/* rain — dense slanted streaks falling, plus a faint cool wash so the
+   window tint shifts even between streaks. The 100deg gradient has a 26px
+   period; vertical translate of 150px advances the pattern exactly one
+   period along the gradient axis (150·sin10° ≈ 26), so the loop is seamless */
 .fx--rain {
   display: block;
+  background: rgba(120, 165, 220, 0.1);
 }
 .fx--rain::before {
   content: "";
   position: absolute;
-  inset: -80px 0;
+  inset: -180px -10%;
   background-image: linear-gradient(
     100deg,
-    transparent 0 8px,
-    rgba(186, 220, 255, 0.5) 8px 10px,
-    transparent 10px 27px,
-    rgba(186, 220, 255, 0.25) 27px 28px,
-    transparent 28px 60px
+    transparent 0 7px,
+    rgba(190, 225, 255, 0.7) 7px 9px,
+    transparent 9px 17px,
+    rgba(190, 225, 255, 0.4) 17px 18px,
+    transparent 18px 26px
   );
   animation: fx-rain 0.6s linear infinite;
 }
 @keyframes fx-rain {
   from { transform: translateY(0); }
-  to { transform: translateY(59px); }
+  to { transform: translateY(150px); }
 }
 
-/* snow — dot layers drifting straight down (one tile row per loop) */
+/* snow — two flake layers drifting straight down. Both layers share a 61px
+   vertical tile so the 122px translate is exactly two periods (seamless) */
 .fx--snow {
   display: block;
+  background: rgba(190, 210, 240, 0.08);
 }
 .fx--snow::before {
   content: "";
   position: absolute;
   inset: -50% -20%;
   background-image:
-    radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.5px, transparent 2px),
-    radial-gradient(circle, rgba(255, 255, 255, 0.6) 2.5px, transparent 3px);
-  background-size: 47px 61px, 83px 97px;
+    radial-gradient(circle, rgba(255, 255, 255, 0.95) 2px, transparent 3px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.7) 3.5px, transparent 4.5px);
+  background-size: 47px 61px, 89px 61px;
   background-position: 0 0, 20px 30px;
   animation: fx-snow 5s linear infinite;
 }
@@ -456,43 +461,43 @@ button {
   animation: motion-shake 0.12s linear infinite;
 }
 @keyframes motion-shake {
-  0% { transform: translate(-3px, 2px); }
-  25% { transform: translate(3px, -2px); }
-  50% { transform: translate(-2px, -3px); }
-  75% { transform: translate(2px, 3px); }
-  100% { transform: translate(-3px, 2px); }
+  0% { transform: translate(-6px, 4px); }
+  25% { transform: translate(6px, -4px); }
+  50% { transform: translate(-4px, -6px); }
+  75% { transform: translate(4px, 6px); }
+  100% { transform: translate(-6px, 4px); }
 }
 
 .motion--float {
-  animation: motion-float 3.4s ease-in-out infinite alternate;
+  animation: motion-float 3s ease-in-out infinite alternate;
 }
 @keyframes motion-float {
-  from { transform: translateY(-1.6%); }
-  to { transform: translateY(1.6%); }
+  from { transform: translateY(-3.2%); }
+  to { transform: translateY(3.2%); }
 }
 
 .motion--zoom {
-  animation: motion-zoom 2.2s ease-in-out infinite alternate;
+  animation: motion-zoom 2.4s ease-in-out infinite alternate;
 }
 @keyframes motion-zoom {
   from { transform: scale(1); }
-  to { transform: scale(1.06); }
+  to { transform: scale(1.12); }
 }
 
 .motion--pulse {
-  animation: motion-pulse 1.4s ease-in-out infinite alternate;
+  animation: motion-pulse 1.6s ease-in-out infinite alternate;
 }
 @keyframes motion-pulse {
   from { filter: brightness(1); }
-  to { filter: brightness(1.5); }
+  to { filter: brightness(1.9); }
 }
 
 .motion--parallax {
   animation: motion-parallax 6s ease-in-out infinite alternate;
 }
 @keyframes motion-parallax {
-  from { transform: translate(-2.5%, -2%); }
-  to { transform: translate(2.5%, 2%); }
+  from { transform: translate(-4.5%, -3.5%); }
+  to { transform: translate(4.5%, 3.5%); }
 }
 
 /* ----------------------------------------------------------------- controls */
