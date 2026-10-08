@@ -28,6 +28,8 @@ import {
   type ModeEvent,
 } from "./modes";
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
+import { PinchCycleDetector } from "./pinch";
+import { nextEffect } from "./effects";
 import { DEFAULT_SELECTION, TOP_LEVEL_ITEMS, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
@@ -138,6 +140,8 @@ export class HandFrameEngine {
 
   /** Two-finger swipe state — see lib/swipe.ts. Runs every frame. */
   private swipeTracker = new SwipeTracker();
+  /** Double-pinch effect cycling + pinch-held state for the freeze guard. */
+  private pinchCycle = new PinchCycleDetector();
 
   private faceState: FaceState = "none";
   private lastFaceBox: Box | null = null;
@@ -496,6 +500,20 @@ export class HandFrameEngine {
       this.handleModeEvent({ type: "reset" });
     }
 
+    // -------------------------------------------------------------- pinch
+    // Decision 1: the FIRST pinch means nothing (it only starts the window
+    // and freezes the frame feed via `held` below — degenerate gesture
+    // geometry is not tracking loss, same rule as the swipe sign); the
+    // SECOND pinch inside the window advances the EFFECT through
+    // lib/effects.nextEffect — never the template or the motion. Consumed
+    // only in FRAME_LOCKED (the gesture matrix decides where it means
+    // anything); every other mode the detector still runs so its window and
+    // edge state stay fresh.
+    const pinchDouble = this.pinchCycle.update(rawHandLandmarks, timestamp);
+    if (pinchDouble && gestureAllowed(this.mode, "pinch")) {
+      this.patchStatus({ effect: nextEffect(this.status.effect) });
+    }
+
     // -------------------------------------------------------------- pointer
     // Index fingertip of the pointing hand, in raw video pixels: the same
     // hand pick as the swipe (right-preferred), falling back to any single
@@ -528,11 +546,13 @@ export class HandFrameEngine {
     // goes degenerate, or outruns MediaPipe — and that is the user SPEAKING
     // to the app, not tracking loss. Freezing the tracker feed and the
     // selection machine on the sign is what lets swipeDown open the menu over
-    // the SAME window. The pinch guard (decision 1, same rule: degenerate
-    // gesture geometry is not tracking loss) rides this same switch once
-    // pinch detection lands with the effects slice.
+    // the SAME window. The pinch guard rides the same switch (decision 1,
+    // same rule): while thumb and index are closed the hand's geometry is
+    // degenerate by design, so pinchCycle.held freezes the feed as well —
+    // its double-pinch consumer above is unaffected.
     const gestureFrozen =
-      this.mode === "FRAME_LOCKED" && this.swipeTracker.gestureHeld;
+      this.mode === "FRAME_LOCKED" &&
+      (this.swipeTracker.gestureHeld || this.pinchCycle.held);
     const feedFrame = frameEnabled && !gestureFrozen;
 
     const detection: HandFrameDetection = detectHandFrame(

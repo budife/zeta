@@ -7,6 +7,7 @@ import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import { HandFrameEngine } from "../lib/engine";
 import { effectClass, motionClass, nextEffect } from "../lib/effects";
+import { PINCH_CONFIG, PinchCycleDetector, isPinched } from "../lib/pinch";
 import {
   clipPathPolygon,
   mediaMatrix,
@@ -1888,6 +1889,59 @@ console.log("\n[35] appearance — effect/motion render classes and effect cycli
   check("next effect from blur is rain", nextEffect("blur") === "rain", nextEffect("blur"));
   check("next effect wraps glitch back to none", nextEffect("glitch") === "none", nextEffect("glitch"));
   check("unknown effect restarts the cycle at none", nextEffect("wat") === "none", nextEffect("wat"));
+}
+
+console.log("\n[36] pinch — thumb-index gesture and the double-pinch effect cycle (decision 1)");
+{
+  // Synthetic 21-point hand: wrist at origin, middle MCP at (0, palm) fixes
+  // the palm scale; tips sit a controllable gap apart. Scale-invariance is
+  // the point — the same pinch must count whether the hand is close or far.
+  const hand = (gap: number, scale = 1): Array<{ x: number; y: number }> => {
+    const lm = Array.from({ length: 21 }, () => ({ x: 0, y: 0 }));
+    lm[0] = { x: 0, y: 0 };
+    lm[9] = { x: 0, y: 100 * scale };
+    lm[4] = { x: (-gap / 2) * scale, y: 200 * scale };
+    lm[8] = { x: (gap / 2) * scale, y: 200 * scale };
+    return lm;
+  };
+
+  check("gap under threshold counts as pinched", isPinched(hand(30)) === true);
+  check("gap over threshold is open", isPinched(hand(40)) === false);
+  check("pinch is scale-invariant (far hand)", isPinched(hand(30, 7)) === true);
+  check("open hand is scale-invariant", isPinched(hand(40, 7)) === false);
+  check("missing landmarks are never pinched", isPinched(null) === false);
+
+  const cycle = new PinchCycleDetector();
+  const t0 = 1_000;
+  check("first pinch alone does not fire", cycle.update([hand(30)], t0) === false);
+  check("held pinch reports held (frame-freeze guard)", cycle.held === true);
+  check(
+    "staying pinched never re-fires (edge, not level)",
+    cycle.update([hand(30)], t0 + 100) === false && cycle.update([hand(30)], t0 + 200) === false
+  );
+  check(
+    "second pinch inside the window fires the cycle",
+    cycle.update([hand(40)], t0 + 300) === false && // release in between
+      cycle.update([hand(30)], t0 + PINCH_CONFIG.windowMs - 100) === true // 600ms after the FIRST pinch
+  );
+  cycle.update([hand(40)], t0 + PINCH_CONFIG.windowMs); // let go after firing
+  check("released pinch stops reporting held", cycle.held === false);
+
+  // A lone pinch that waits out the window starts a fresh pair.
+  const late = new PinchCycleDetector();
+  late.update([hand(30)], 0);
+  late.update([hand(40)], 100);
+  check(
+    "second pinch after the window does not fire",
+    late.update([hand(30)], 100 + PINCH_CONFIG.windowMs + 10) === false
+  );
+  check("any hand pinching is enough (two hands)", isPinched(hand(30)) === true);
+
+  const twoHands = new PinchCycleDetector();
+  check(
+    "open first hand + pinching second hand still counts",
+    twoHands.update([hand(50), hand(30)], 0) === false // first (aggregate) pinch
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);
