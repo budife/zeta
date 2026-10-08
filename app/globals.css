@@ -287,11 +287,15 @@ button {
  * `clip-path`. The frame is a window, not a container: the media is never
  * scaled down to fit inside it.
  *
- * DOM structure:
+ * DOM structure (exactly one branch renders per contentMode):
  *   .media-layer          (root)
- *   └── .media-layer__clip   (clip-path only — the hand-made window)
- *       └── .media-layer__content (transform only — mirror + face alignment)
- *           └── .media-layer__media  (img/video, object-fit: cover)
+ *   └── .media-layer__clip   (clip-path only — the hand-made window; the
+ *                             window itself is NEVER animated)
+ *       ├── .media-layer__content  (template mode: transform only — mirror +
+ *       │   └── .media-layer__media    face alignment)
+ *       ├── .media-layer__motion   (motion mode: animated full-size wrapper)
+ *       │   └── .media-layer__media    (mirrored copy of the live camera)
+ *       └── .media-layer__fx       (effect mode: overlay, sibling AFTER)
  *
  * The clip and the transform MUST stay on separate elements: transforming the
  * clipped element would drag the window itself along.
@@ -319,6 +323,16 @@ button {
    * at mount is the same MIRROR_TRANSFORM the camera uses — it only shows
    * until the first snapshot arrives, but it must still match.
    */
+}
+
+/*
+ * Motion wrapper: a full-size layer INSIDE the clip that the .motion--*
+ * keyframes animate. The camera copy rides it, so the media moves while the
+ * window's clip-path (the geometry) stays exactly where the hands put it.
+ */
+.media-layer__motion {
+  position: absolute;
+  inset: 0;
 }
 
 .media-layer__media {
@@ -453,9 +467,10 @@ button {
 }
 
 /*
- * Motions — animate the CLIP element, i.e. the window itself moves (and the
- * media inside rides along). The media's transform stays purely the JS
- * mirror∘align matrix — never animated here (decision 6).
+ * Motions — animate the .media-layer__motion WRAPPER, i.e. the camera copy
+ * inside the window moves while the window's clip-path (the geometry) never
+ * does. The wrapper's child keeps its plain mirror transform — only the
+ * wrapper itself is animated (spec: motion must not move the window).
  */
 .motion--shake {
   animation: motion-shake 0.12s linear infinite;

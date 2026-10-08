@@ -8,9 +8,9 @@
  * identical to the menu's list. The renderers consume the classes:
  *
  *   effectClass → .media-layer__fx  (overlay inside the hand window)
- *   motionClass → .media-layer__clip (the window itself moves, decision 6:
- *                                      the media inside is never re-transformed,
- *                                      so it cannot fight the mirror matrix)
+ *   motionClass → .media-layer__motion (a full-size wrapper INSIDE the clip,
+ *                                      so only the media moves — the window
+ *                                      geometry never does)
  */
 
 import { EFFECT_ITEMS } from "./menuModel";
@@ -43,10 +43,11 @@ export function motionClass(motion: string): string {
 
 /**
  * The next effect in menu order, wrapping (decision 1: double pinch cycles
- * the EFFECT only — template and motion are untouched). Unknown ids restart
- * the cycle instead of throwing: status can only hold known ids anyway.
+ * the EFFECT only — template and motion are untouched). Null (no content) or
+ * an unknown id starts the cycle at the first effect instead of throwing:
+ * status can only hold known ids anyway.
  */
-export function nextEffect(current: string): string {
+export function nextEffect(current: string | null): string {
   const index = EFFECT_ITEMS.findIndex((item) => item.id === current);
   return EFFECT_ITEMS[(index + 1) % EFFECT_ITEMS.length].id;
 }

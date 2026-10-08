@@ -88,20 +88,22 @@ export type AppStatus = {
    */
   menuTop: import("./menuModel").TopLevelItem | null;
   /**
-   * Which category holds THE selection (user rule: template, effect and
-   * motion are mutually exclusive — only one is live at a time). The other
-   * two sit at their defaults; `selectionPatch` is the single source.
+   * Which category is THE content mode (user rule: template, effect and
+   * motion are mutually exclusive — only one renders at a time). Null means
+   * "nothing is showing" (fresh state or after a reset); `selectionPatch`
+   * is the single source that flips it on a pick.
    */
-  selectionMode: import("./modes").MenuPick["kind"];
+  contentMode: import("./modes").MenuPick["kind"] | null;
   /**
-   * Active menu selections — seeded from `DEFAULT_SELECTION` and only
-   * changed by `itemSelected` payloads. They are APP state, not frame state:
-   * a gesture reset or camera-off keeps them, so the menu always reopens
-   * showing what is active.
+   * The live content values — set by `itemSelected` payloads via
+   * `selectionPatch`, which nulls the two non-active categories so exactly
+   * one is non-null, matching `contentMode`. They are APP state within a
+   * session, but a gesture reset or camera-off clears them back to null
+   * (spec §22: reset leaves "nothing is showing").
    */
-  template: string;
-  effect: string;
-  motion: string;
+  template: string | null;
+  effect: string | null;
+  motion: string | null;
   hands: number;
   frame: "inactive" | "active";
   face: FaceState;

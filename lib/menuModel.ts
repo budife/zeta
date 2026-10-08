@@ -40,12 +40,18 @@ const characters: MenuItemDef[] = Array.from({ length: 10 }, (_, i) => {
   return { id: `character-${n}`, label: `Character ${n}` };
 });
 
-/** TEMPLATE: one flat list of the bundled assets (recommendation 1). */
-export const TEMPLATE_ITEMS: MenuItemDef[] = [{ id: "template", label: "Template" }, ...characters];
+/** TEMPLATE: one flat list of the bundled assets (recommendation 1), plus the
+ *  upload row — a pick from it hands control to the file input instead of
+ *  setting a template id (the renderer intercepts it). */
+export const TEMPLATE_ITEMS: MenuItemDef[] = [
+  { id: "template", label: "Template" },
+  ...characters,
+  { id: "upload", label: "Upload Media" },
+];
 
-/** EFFECTS: None + the 5 MVP effects (decision 4). */
+/** EFFECTS: the 5 MVP effects (decision 4). No "none" row — leaving the
+ *  effect category (by picking a template/motion) is what turns it off. */
 export const EFFECT_ITEMS: MenuItemDef[] = [
-  { id: "none", label: "None" },
   { id: "blur", label: "Blur" },
   { id: "rain", label: "Rain" },
   { id: "snow", label: "Snow" },
@@ -53,9 +59,8 @@ export const EFFECT_ITEMS: MenuItemDef[] = [
   { id: "glitch", label: "Glitch" },
 ];
 
-/** MOTION: None + the 5 MVP motions (decision 4 / spec motion list). */
+/** MOTION: the 5 MVP motions (decision 4 / spec motion list), no "none" row. */
 export const MOTION_ITEMS: MenuItemDef[] = [
-  { id: "none", label: "None" },
   { id: "shake", label: "Shake" },
   { id: "float", label: "Float" },
   { id: "zoom", label: "Zoom" },
@@ -71,11 +76,14 @@ export const SUBMENUS: Record<TopLevelItem, MenuItemDef[]> = {
 };
 
 /**
- * What is active until the user picks something else (recommendation 2):
- * the bundled template, no effect, no motion. The engine seeds `AppStatus`
- * from this, so the menu's highlight and the engine agree by construction.
+ * The EMPTY content state (spec §22): contentMode null = "nothing is
+ * showing". This is what a fresh engine and any reset (gesture or
+ * camera-off) leave behind — until the user completes a menu pick, the
+ * window (when it can form) reveals the raw camera only. The three values
+ * here are the nullable defaults every non-active category falls back to
+ * inside `selectionPatch`.
  */
-export const DEFAULT_SELECTION = { template: "template", effect: "none", motion: "none" } as const;
+export const EMPTY_SELECTION = { template: null, effect: null, motion: null } as const;
 
 // ---------------------------------------------------------------------------
 // Layout — stage FRACTIONS (0..1), the same space the mirrored pointer maps
@@ -104,7 +112,7 @@ export type MenuLayout = {
 
 /**
  * Geometry constants, tuned to keep the longest list (TEMPLATE: 3 tabs +
- * 11 items = 14 rows) inside a 16:9 stage with margin to spare.
+ * 12 items = 15 rows) inside a 16:9 stage with margin to spare.
  */
 const L = {
   right: 0.035, // panel's distance from the stage's right edge
@@ -158,23 +166,23 @@ export function menuLayout(mode: AppMode, top: TopLevelItem | null): MenuLayout 
 
 /**
  * The three categories are mutually exclusive (user rule: template, effect
- * and motion never run together — picking one is THE selection). A pick in
- * one category sets its value and pushes the other two back to their
- * defaults; the patch also carries the active category so the panel can show
- * the one live mode. One function, so the engine's menu path and its
- * double-pinch path can't disagree about what "one at a time" means.
+ * and motion never run together — picking one is THE content mode). A pick
+ * in one category sets `contentMode` to it and its value, and pushes the
+ * other two back to null (nothing showing). One function, so the engine's
+ * menu path and its double-pinch path can't disagree about what "one at a
+ * time" means.
  */
 export function selectionPatch(kind: MenuPick["kind"], id: string): {
-  selectionMode: MenuPick["kind"];
-  template: string;
-  effect: string;
-  motion: string;
+  contentMode: MenuPick["kind"];
+  template: string | null;
+  effect: string | null;
+  motion: string | null;
 } {
   return {
-    selectionMode: kind,
-    template: kind === "template" ? id : DEFAULT_SELECTION.template,
-    effect: kind === "effect" ? id : DEFAULT_SELECTION.effect,
-    motion: kind === "motion" ? id : DEFAULT_SELECTION.motion,
+    contentMode: kind,
+    template: kind === "template" ? id : null,
+    effect: kind === "effect" ? id : null,
+    motion: kind === "motion" ? id : null,
   };
 }
 
@@ -188,26 +196,25 @@ const CATEGORY_BY_TOP: Record<TopLevelItem, MenuPick["kind"]> = {
 /**
  * Whether a menu row may show the "this is selected" check.
  *
- * The value-based check that used to live in the renderer had a bug: after
- * picking blur the mode is effect and the template sits at its DEFAULT
- * ("template"), so the TEMPLATE submenu still checked its "Template" row —
- * looking selected when nothing in that category was live. The rule here is
- * category-first: a row is live only when its CATEGORY is the active one,
- * and then only when its value is the active value. That yields exactly one
- * live row per menu: the tab of the live category (when its submenu is
- * closed), or the picked item inside it (when it is open).
+ * The rule is category-first: a row is live only when its CATEGORY is the
+ * active `contentMode`, and then only when its value is the active value.
+ * That yields exactly one live row per menu: the tab of the live category
+ * (when its submenu is closed), or the picked item inside it (when it is
+ * open). With `contentMode === null` (fresh state, or after a reset) no row
+ * is live at all — there is no content to highlight.
  */
 export function isLiveRow(
   kind: "top" | "sub",
   id: string,
   openTop: TopLevelItem | null,
-  selectionMode: MenuPick["kind"],
-  selection: { template: string; effect: string; motion: string }
+  contentMode: MenuPick["kind"] | null,
+  selection: { template: string | null; effect: string | null; motion: string | null }
 ): boolean {
-  if (kind === "top") return CATEGORY_BY_TOP[id as TopLevelItem] === selectionMode;
+  if (!contentMode) return false;
+  if (kind === "top") return CATEGORY_BY_TOP[id as TopLevelItem] === contentMode;
   if (!openTop) return false;
   const category = CATEGORY_BY_TOP[openTop];
-  if (selectionMode !== category) return false;
+  if (contentMode !== category) return false;
   return selection[category] === id;
 }
 

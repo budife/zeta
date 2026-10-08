@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HandFrameEngine } from "@/lib/engine";
 import { INITIAL_MODE } from "@/lib/modes";
-import { DEFAULT_SELECTION } from "@/lib/menuModel";
+import { EMPTY_SELECTION } from "@/lib/menuModel";
 import type { AppStatus, Snapshot } from "@/lib/types";
 
 const DEFAULT_STATUS: AppStatus = {
@@ -11,10 +11,10 @@ const DEFAULT_STATUS: AppStatus = {
   models: "loading",
   mode: INITIAL_MODE,
   menuTop: null,
-  selectionMode: "template",
-  template: DEFAULT_SELECTION.template,
-  effect: DEFAULT_SELECTION.effect,
-  motion: DEFAULT_SELECTION.motion,
+  contentMode: null,
+  template: EMPTY_SELECTION.template,
+  effect: EMPTY_SELECTION.effect,
+  motion: EMPTY_SELECTION.motion,
   hands: 0,
   frame: "inactive",
   face: "none",

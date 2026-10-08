@@ -31,11 +31,13 @@ export type MainMenuProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
   mode: AppMode;
   menuTop: TopLevelItem | null;
-  /** Which category holds THE selection (the other two are at their defaults). */
-  selectionMode: MenuPick["kind"];
-  template: string;
-  effect: string;
-  motion: string;
+  /** Which category is THE content mode (null = nothing is showing). */
+  contentMode: MenuPick["kind"] | null;
+  template: string | null;
+  effect: string | null;
+  motion: string | null;
+  /** Opens the file picker for the TEMPLATE submenu's "Upload Media" row. */
+  onUpload: () => void;
   onEvent: (event: ModeEvent) => void;
 };
 
@@ -62,10 +64,11 @@ export function MainMenu({
   subscribe,
   mode,
   menuTop,
-  selectionMode,
+  contentMode,
   template,
   effect,
   motion,
+  onUpload,
   onEvent,
 }: MainMenuProps) {
   const layout = useMemo(() => menuLayout(mode, menuTop), [mode, menuTop]);
@@ -73,8 +76,8 @@ export function MainMenu({
 
   // Frame-rate machinery lives in refs: the subscription below must always
   // see the latest props without resubscribing on every render.
-  const stateRef = useRef({ mode, menuTop, layout, onEvent });
-  stateRef.current = { mode, menuTop, layout, onEvent };
+  const stateRef = useRef({ mode, menuTop, layout, onEvent, onUpload });
+  stateRef.current = { mode, menuTop, layout, onEvent, onUpload };
   const hoverRef = useRef(new HoverTracker());
   const rowElsRef = useRef(new Map<string, HTMLButtonElement>());
   const prevRef = useRef({ mode, top: menuTop, hoverId: null as string | null });
@@ -87,10 +90,17 @@ export function MainMenu({
   };
 
   const selectRow = (row: MenuRow) => {
-    const { menuTop: top, onEvent: emit } = stateRef.current;
+    const { menuTop: top, onEvent: emit, onUpload: upload } = stateRef.current;
     if (row.kind === "top") {
       emit({ type: "openSubmenu", top: row.id });
     } else if (top) {
+      // The upload row hands control to the file input (page.tsx) instead of
+      // setting a template id — no content change happens here; the picker's
+      // result dispatches its own event.
+      if (top === "TEMPLATE" && row.id === "upload") {
+        upload();
+        return;
+      }
       emit({ type: "itemSelected", item: { kind: KIND_BY_TOP[top], id: row.id } });
     }
   };
@@ -150,10 +160,10 @@ export function MainMenu({
         {title}
       </div>
       {layout.rows.map((row) => {
-        // The check follows the LIVE category (isLiveRow), not just a
-        // matching value — otherwise the reset default of a dead category
-        // would look selected.
-        const active = isLiveRow(row.kind, row.id, menuTop, selectionMode, selections);
+        // The check follows the LIVE contentMode (isLiveRow), not just a
+        // matching value — and with contentMode null (fresh state, post-
+        // reset) no row may claim to be selected at all.
+        const active = isLiveRow(row.kind, row.id, menuTop, contentMode, selections);
         const label =
           row.kind === "top"
             ? row.id

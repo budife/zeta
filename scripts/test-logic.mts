@@ -51,7 +51,7 @@ import {
   TEMPLATE_ITEMS,
   EFFECT_ITEMS,
   MOTION_ITEMS,
-  DEFAULT_SELECTION,
+  EMPTY_SELECTION,
   menuLayout,
   hitTestMenu,
   selectionPatch,
@@ -1719,8 +1719,11 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
 {
   // ---- structure & defaults (recommendations 1 & 2) ----
   check(
-    "TEMPLATE is one flat list of 11",
-    TEMPLATE_ITEMS.length === 11 && TEMPLATE_ITEMS[0].id === "template",
+    "TEMPLATE is a flat list of 12 ending with the upload row",
+    TEMPLATE_ITEMS.length === 12 &&
+      TEMPLATE_ITEMS[0].id === "template" &&
+      TEMPLATE_ITEMS[11].id === "upload" &&
+      TEMPLATE_ITEMS[11].label === "Upload Media",
     String(TEMPLATE_ITEMS.length)
   );
   check(
@@ -1729,21 +1732,21 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
     TEMPLATE_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "EFFECTS = None + the 5 MVP effects",
-    EFFECT_ITEMS.map((i) => i.id).join(",") === "none,blur,rain,snow,cyberpunk,glitch",
+    "EFFECTS = the 5 MVP effects (no None row)",
+    EFFECT_ITEMS.map((i) => i.id).join(",") === "blur,rain,snow,cyberpunk,glitch",
     EFFECT_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "MOTION = None + the 5 MVP motions",
-    MOTION_ITEMS.map((i) => i.id).join(",") === "none,shake,float,zoom,pulse,parallax",
+    "MOTION = the 5 MVP motions (no None row)",
+    MOTION_ITEMS.map((i) => i.id).join(",") === "shake,float,zoom,pulse,parallax",
     MOTION_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "defaults: template.svg, no effect, no motion",
-    DEFAULT_SELECTION.template === "template" &&
-      DEFAULT_SELECTION.effect === "none" &&
-      DEFAULT_SELECTION.motion === "none",
-    JSON.stringify(DEFAULT_SELECTION)
+    "defaults: nothing selected until the user picks",
+    EMPTY_SELECTION.template === null &&
+      EMPTY_SELECTION.effect === null &&
+      EMPTY_SELECTION.motion === null,
+    JSON.stringify(EMPTY_SELECTION)
   );
 
   // ---- layout: one source of truth for rendering AND hit-testing ----
@@ -1755,14 +1758,14 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   );
   const selT = menuLayout("MENU_SELECT", "TEMPLATE");
   check(
-    "MENU_SELECT: 3 tabs + 11 template items",
-    selT.rows.length === 14 && selT.rows.filter((r) => r.kind === "sub").length === 11,
+    "MENU_SELECT: 3 tabs + 12 template items",
+    selT.rows.length === 15 && selT.rows.filter((r) => r.kind === "sub").length === 12,
     String(selT.rows.length)
   );
   const selE = menuLayout("MENU_SELECT", "EFFECTS");
   check(
-    "EFFECTS submenu: 3 tabs + 6 items",
-    selE.rows.length === 9 && selE.rows.filter((r) => r.kind === "sub").length === 6,
+    "EFFECTS submenu: 3 tabs + 5 items",
+    selE.rows.length === 8 && selE.rows.filter((r) => r.kind === "sub").length === 5,
     String(selE.rows.length)
   );
   const allBoxes = [open, selT, selE].flatMap((l) => [l.panel, l.title, ...l.rows.map((r) => r.box)]);
@@ -1815,19 +1818,31 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   let st: {
     mode?: string;
     menuTop?: string | null;
-    template?: string;
-    effect?: string;
-    motion?: string;
+    contentMode?: string | null;
+    template?: string | null;
+    effect?: string | null;
+    motion?: string | null;
   } = {};
   eng.onStatus((s) => {
-    st = { mode: s.mode, menuTop: s.menuTop, template: s.template, effect: s.effect, motion: s.motion };
+    st = {
+      mode: s.mode,
+      menuTop: s.menuTop,
+      contentMode: s.contentMode,
+      template: s.template,
+      effect: s.effect,
+      motion: s.motion,
+    };
   });
   // Status only emits on change — nudge it once so the listener has the
   // engine's initial values to report.
   eng.setModelsStatus("ready");
   check(
-    "fresh engine starts on the defaults",
-    st.template === "template" && st.effect === "none" && st.motion === "none" && st.menuTop === null,
+    "fresh engine starts with no content",
+    st.contentMode === null &&
+      st.template === null &&
+      st.effect === null &&
+      st.motion === null &&
+      st.menuTop === null,
     JSON.stringify(st)
   );
   eng.handleModeEvent({ type: "openMenu" });
@@ -1837,10 +1852,22 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
     st.menuTop === "EFFECTS" && st.mode === "MENU_SELECT",
     JSON.stringify(st)
   );
+  // Switching submenus changes menuTop without changing the mode — the
+  // status still has to reach React, or the panel shows a stale submenu.
+  eng.handleModeEvent({ type: "openSubmenu", top: "TEMPLATE" });
+  check(
+    "switching submenus re-emits status",
+    st.menuTop === "TEMPLATE" && st.mode === "MENU_SELECT",
+    JSON.stringify(st)
+  );
+  eng.handleModeEvent({ type: "openSubmenu", top: "EFFECTS" });
   eng.handleModeEvent({ type: "itemSelected", item: { kind: "effect", id: "blur" } });
   check(
     "engine records the picked effect and moves on",
-    st.effect === "blur" && st.mode === "FRAME_SEARCH",
+    st.contentMode === "effect" &&
+      st.effect === "blur" &&
+      st.template === null &&
+      st.mode === "FRAME_SEARCH",
     JSON.stringify(st)
   );
   eng.handleModeEvent({ type: "openMenu" });
@@ -1848,18 +1875,22 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   eng.handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "character-05" } });
   check("engine records the picked template", st.template === "character-05", String(st.template));
   check(
-    "template pick retired the effect (categories are exclusive)",
-    st.effect === "none" && st.motion === "none",
+    "template pick retired the effect and the motion (categories are exclusive)",
+    st.contentMode === "template" && st.effect === null && st.motion === null,
     JSON.stringify(st)
   );
   eng.handleModeEvent({ type: "frameLocked" });
   check("frame lock still works after the picks", st.mode === "FRAME_LOCKED", String(st.mode));
-  // A gesture reset clears the FRAME, not the user's choice (it is app state:
-  // the menu reopens showing what is active).
+  // A gesture reset clears the frame AND the content (spec §22: back to
+  // "nothing is showing" until the user picks again).
   eng.handleModeEvent({ type: "reset" });
   check(
-    "gesture reset keeps the pick but clears the frame",
-    st.mode === "IDLE" && st.template === "character-05",
+    "gesture reset clears the frame and the content",
+    st.mode === "IDLE" &&
+      st.contentMode === null &&
+      st.template === null &&
+      st.effect === null &&
+      st.motion === null,
     JSON.stringify(st)
   );
   eng.dispose();
@@ -1893,10 +1924,10 @@ console.log("\n[35] appearance — effect/motion render classes and effect cycli
   check('motion "none" renders nothing', motionClass("none") === "", JSON.stringify(motionClass("none")));
   check("unknown motion renders nothing", motionClass("orbit") === "", motionClass("orbit"));
 
-  check("next effect from none is blur", nextEffect("none") === "blur", nextEffect("none"));
   check("next effect from blur is rain", nextEffect("blur") === "rain", nextEffect("blur"));
-  check("next effect wraps glitch back to none", nextEffect("glitch") === "none", nextEffect("glitch"));
-  check("unknown effect restarts the cycle at none", nextEffect("wat") === "none", nextEffect("wat"));
+  check("next effect wraps glitch back to blur", nextEffect("glitch") === "blur", nextEffect("glitch"));
+  check("unknown effect restarts the cycle at blur", nextEffect("wat") === "blur", nextEffect("wat"));
+  check("no content (null) starts the cycle at blur", nextEffect(null) === "blur", String(nextEffect(null)));
 }
 
 console.log("\n[36] pinch — thumb-index gesture and the double-pinch effect cycle (decision 1)");
@@ -1955,47 +1986,53 @@ console.log("\n[36] pinch — thumb-index gesture and the double-pinch effect cy
 console.log("\n[37] selections are mutually exclusive — one mode at a time (user rule)");
 {
   // selectionPatch is the single source of the rule: a pick in one category
-  // becomes THE selection and pushes the other two back to their defaults.
+  // becomes THE content mode and pushes the other two back to null (nothing
+  // showing) — template, effect and motion never run together.
   const templatePick = selectionPatch("template", "character-05");
   check(
-    "template pick: template set, effect/motion reset, mode recorded",
-    templatePick.selectionMode === "template" &&
+    "template pick: template set, others null, contentMode recorded",
+    templatePick.contentMode === "template" &&
       templatePick.template === "character-05" &&
-      templatePick.effect === DEFAULT_SELECTION.effect &&
-      templatePick.motion === DEFAULT_SELECTION.motion,
+      templatePick.effect === null &&
+      templatePick.motion === null,
     JSON.stringify(templatePick)
   );
   const effectPick = selectionPatch("effect", "cyberpunk");
   check(
-    "effect pick: effect set, template/motion reset",
-    effectPick.selectionMode === "effect" &&
+    "effect pick: effect set, template/motion null",
+    effectPick.contentMode === "effect" &&
       effectPick.effect === "cyberpunk" &&
-      effectPick.template === DEFAULT_SELECTION.template &&
-      effectPick.motion === DEFAULT_SELECTION.motion,
+      effectPick.template === null &&
+      effectPick.motion === null,
     JSON.stringify(effectPick)
   );
   const motionPick = selectionPatch("motion", "float");
   check(
-    "motion pick: motion set, template/effect reset",
-    motionPick.selectionMode === "motion" &&
+    "motion pick: motion set, template/effect null",
+    motionPick.contentMode === "motion" &&
       motionPick.motion === "float" &&
-      motionPick.template === DEFAULT_SELECTION.template &&
-      motionPick.effect === DEFAULT_SELECTION.effect,
+      motionPick.template === null &&
+      motionPick.effect === null,
     JSON.stringify(motionPick)
   );
 
   // The engine must apply the same rule through the real event path, so a
   // pick made in the menu never leaves two categories live at once.
   const eng = new HandFrameEngine();
-  type Sel = { mode: string; template: string; effect: string; motion: string };
-  let st: Sel = { mode: "", template: "", effect: "", motion: "" };
+  type Sel = {
+    contentMode: string | null;
+    template: string | null;
+    effect: string | null;
+    motion: string | null;
+  };
+  let st: Sel = { contentMode: null, template: null, effect: null, motion: null };
   eng.onStatus((s) => {
-    st = { mode: s.selectionMode, template: s.template, effect: s.effect, motion: s.motion };
+    st = { contentMode: s.contentMode, template: s.template, effect: s.effect, motion: s.motion };
   });
   eng.setModelsStatus("ready"); // force the initial emission
   check(
-    "fresh engine reports template mode on the defaults",
-    st.mode === "template" && st.template === "template" && st.effect === "none" && st.motion === "none",
+    "fresh engine reports no content",
+    st.contentMode === null && st.template === null && st.effect === null && st.motion === null,
     JSON.stringify(st)
   );
 
@@ -2008,25 +2045,37 @@ console.log("\n[37] selections are mutually exclusive — one mode at a time (us
   pick("TEMPLATE", "template", "character-05");
   check(
     "character pick leaves nothing else live",
-    st.mode === "template" && st.template === "character-05" && st.effect === "none" && st.motion === "none",
+    st.contentMode === "template" &&
+      st.template === "character-05" &&
+      st.effect === null &&
+      st.motion === null,
     JSON.stringify(st)
   );
   pick("EFFECTS", "effect", "cyberpunk");
   check(
     "cyberpunk pick drops the character and the motion",
-    st.mode === "effect" && st.template === "template" && st.effect === "cyberpunk" && st.motion === "none",
+    st.contentMode === "effect" &&
+      st.template === null &&
+      st.effect === "cyberpunk" &&
+      st.motion === null,
     JSON.stringify(st)
   );
   pick("MOTION", "motion", "float");
   check(
     "float pick drops the effect",
-    st.mode === "motion" && st.template === "template" && st.effect === "none" && st.motion === "float",
+    st.contentMode === "motion" &&
+      st.template === null &&
+      st.effect === null &&
+      st.motion === "float",
     JSON.stringify(st)
   );
   pick("TEMPLATE", "template", "template");
   check(
     "default template row settles everything back to defaults",
-    st.mode === "template" && st.template === "template" && st.effect === "none" && st.motion === "none",
+    st.contentMode === "template" &&
+      st.template === "template" &&
+      st.effect === null &&
+      st.motion === null,
     JSON.stringify(st)
   );
   eng.dispose();
@@ -2034,10 +2083,10 @@ console.log("\n[37] selections are mutually exclusive — one mode at a time (us
 
 console.log("\n[38] live-row highlight — only the live category may show a check");
 {
-  // After picking blur the mode is "effect" and template sits at its default.
-  // The TEMPLATE submenu must NOT mark "Template" as live: the value matches,
-  // but the category is not the active one.
-  const afterEffect = { template: "template", effect: "blur", motion: "none" };
+  // After picking blur the contentMode is "effect" and no template or motion
+  // is set. The TEMPLATE submenu must NOT mark its (null) row live: there is
+  // no live value there, and the category is not the active one.
+  const afterEffect = { template: null, effect: "blur", motion: null };
   check(
     "dead submenu never marks its default value live",
     isLiveRow("sub", "template", "TEMPLATE", "effect", afterEffect) === false
@@ -2062,16 +2111,16 @@ console.log("\n[38] live-row highlight — only the live category may show a che
     "a live template marks its own item, not the default",
     isLiveRow("sub", "character-05", "TEMPLATE", "template", {
       template: "character-05",
-      effect: "none",
-      motion: "none",
+      effect: null,
+      motion: null,
     }) === true
   );
   check(
     "the default template row is not live when a character is picked",
     isLiveRow("sub", "template", "TEMPLATE", "template", {
       template: "character-05",
-      effect: "none",
-      motion: "none",
+      effect: null,
+      motion: null,
     }) === false
   );
 
@@ -2081,6 +2130,13 @@ console.log("\n[38] live-row highlight — only the live category may show a che
     isLiveRow(row.kind, row.id, "TEMPLATE", "effect", afterEffect)
   ).length;
   check("whole menu shows exactly one live row (the tab)", liveCount === 1, String(liveCount));
+
+  // Fresh state (contentMode null, nothing selected): no row anywhere may
+  // claim to be live.
+  const freshCount = menuLayout("MENU_SELECT", "TEMPLATE").rows.filter((row) =>
+    isLiveRow(row.kind, row.id, "TEMPLATE", null, { template: null, effect: null, motion: null })
+  ).length;
+  check("no content means no live row at all", freshCount === 0, String(freshCount));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

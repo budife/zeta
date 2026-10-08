@@ -30,7 +30,7 @@ import {
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
 import { PinchCycleDetector } from "./pinch";
 import { nextEffect } from "./effects";
-import { DEFAULT_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } from "./menuModel";
+import { EMPTY_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -167,10 +167,10 @@ export class HandFrameEngine {
     models: "loading",
     mode: INITIAL_MODE,
     menuTop: null,
-    selectionMode: "template",
-    template: DEFAULT_SELECTION.template,
-    effect: DEFAULT_SELECTION.effect,
-    motion: DEFAULT_SELECTION.motion,
+    contentMode: null,
+    template: EMPTY_SELECTION.template,
+    effect: EMPTY_SELECTION.effect,
+    motion: EMPTY_SELECTION.motion,
     hands: 0,
     frame: "inactive",
     face: "none",
@@ -199,10 +199,19 @@ export class HandFrameEngine {
 
   private patchStatus(patch: Partial<AppStatus>): void {
     const next: AppStatus = { ...this.status, ...patch };
+    // Every field that can arrive through a menu payload is part of the
+    // diff: menuTop/contentMode and the three selections change without the
+    // mode ever moving (submenu switches, pinch effect cycles), so leaving
+    // them out would leave React rendering a stale panel.
     const changed =
       next.camera !== this.status.camera ||
       next.models !== this.status.models ||
       next.mode !== this.status.mode ||
+      next.menuTop !== this.status.menuTop ||
+      next.contentMode !== this.status.contentMode ||
+      next.template !== this.status.template ||
+      next.effect !== this.status.effect ||
+      next.motion !== this.status.motion ||
       next.hands !== this.status.hands ||
       next.frame !== this.status.frame ||
       next.face !== this.status.face ||
@@ -248,8 +257,8 @@ export class HandFrameEngine {
       const top = event.top as TopLevelItem | undefined;
       if (top && TOP_LEVEL_ITEMS.includes(top)) this.patchStatus({ menuTop: top });
     } else if (event.type === "itemSelected" && event.item) {
-      // One category at a time: the patch resets the other two (selectionPatch
-      // is the single source of that rule).
+      // One content mode at a time: the patch sets contentMode and nulls
+      // the other two categories (selectionPatch is that rule's source).
       this.patchStatus(selectionPatch(event.item.kind, event.item.id));
     }
   }
@@ -264,9 +273,9 @@ export class HandFrameEngine {
    * The frame half of a reset: window, selection, face state, region lock —
    * everything that depends on the locked window. Shared by the camera-off
    * `reset()` and by the swipe-left gesture reset (Slice H), so the two can
-   * never drift apart on what "clearing everything" means. Menu picks
-   * (`menuTop`/template/effect/motion) deliberately stay: they are app
-   * state, and the menu must reopen showing what is active.
+   * never drift apart on what "clearing everything" means. The content
+   * (contentMode + template/effect/motion) is cleared too: spec §22 says a
+   * reset leaves "nothing is showing" until the user picks again.
    */
   private clearFrameState(): void {
     this.selection = INITIAL_SELECTION;
@@ -276,7 +285,14 @@ export class HandFrameEngine {
     this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.tracker.reset();
-    this.patchStatus({ frame: "inactive", face: "none" });
+    this.patchStatus({
+      frame: "inactive",
+      face: "none",
+      contentMode: null,
+      template: null,
+      effect: null,
+      motion: null,
+    });
   }
 
   // ------------------------------------------------------------------- models
@@ -505,14 +521,17 @@ export class HandFrameEngine {
     // and freezes the frame feed via `held` below — degenerate gesture
     // geometry is not tracking loss, same rule as the swipe sign); the
     // SECOND pinch inside the window advances the EFFECT through
-    // lib/effects.nextEffect — never the template or the motion. Consumed
-    // only in FRAME_LOCKED (the gesture matrix decides where it means
-    // anything); every other mode the detector still runs so its window and
-    // edge state stay fresh.
+    // lib/effects.nextEffect — never the template or the motion, and only
+    // while the effect IS the live content mode (spec: in template/motion
+    // mode the pinch must not change anything). Consumed only in
+    // FRAME_LOCKED (the gesture matrix decides where it means anything);
+    // every other mode the detector still runs so its window and edge state
+    // stay fresh.
     const pinchDouble = this.pinchCycle.update(rawHandLandmarks, timestamp);
-    if (pinchDouble && gestureAllowed(this.mode, "pinch")) {
+    if (pinchDouble && gestureAllowed(this.mode, "pinch") && this.status.contentMode === "effect") {
       // The cycle goes through selectionPatch too: an effect arriving by
-      // gesture clears the motion/template just like a menu pick does.
+      // gesture keeps contentMode on "effect" and nulls template/motion
+      // exactly like a menu pick does.
       this.patchStatus(selectionPatch("effect", nextEffect(this.status.effect)));
     }
 

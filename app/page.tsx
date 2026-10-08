@@ -32,7 +32,15 @@ export default function HomePage() {
     handleModeEvent,
   } = useHandFrameEngine();
 
-  const media = uploaded ?? `/vectors/${status.template}.svg`;
+  // What (if anything) shows through the window: only the template category
+  // renders content — effect/motion modes leave the raw camera visible
+  // (spec §22: the three categories are mutually exclusive modes). An
+  // uploaded file overrides the selected template's asset; object URLs are
+  // released on replace/unmount (the [media] effect below).
+  const media =
+    status.contentMode === "template" && status.template
+      ? (uploaded ?? `/vectors/${status.template}.svg`)
+      : null;
   const cameraReady = status.camera === "ready";
   const modelsLoading = status.models === "loading";
   const frameActive = status.frame === "active";
@@ -50,19 +58,30 @@ export default function HomePage() {
   // shown through the window. Object URLs are released on replace/unmount.
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Release the object URL when the uploaded file is REPLACED or cleared —
+  // keyed on `uploaded`, not on derived `media`, so merely leaving template
+  // mode (media → null) never revokes a URL the state still holds.
   useEffect(() => {
     return () => {
-      if (media.startsWith("blob:")) URL.revokeObjectURL(media);
+      if (uploaded?.startsWith("blob:")) URL.revokeObjectURL(uploaded);
     };
-  }, [media]);
+  }, [uploaded]);
 
-  const handleUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setUploaded(URL.createObjectURL(file));
-    // Reset so picking the same file again still fires onChange.
-    event.target.value = "";
-  }, []);
+  const handleUpload = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      setUploaded(URL.createObjectURL(file));
+      // The upload row's pick: contentMode becomes "template" with the
+      // uploaded asset on top (media derives uploaded over status.template).
+      // Dispatched DIRECTLY so handleMenuEvent's "a template pick supersedes
+      // the upload" rule does not clear the file we just chose.
+      handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "upload" } });
+      // Reset so picking the same file again still fires onChange.
+      event.target.value = "";
+    },
+    [handleModeEvent]
+  );
 
   const handleResetMedia = useCallback(() => {
     setUploaded(null);
@@ -71,10 +90,17 @@ export default function HomePage() {
   }, [handleModeEvent]);
 
   // Menu events reach the engine; a template pick also supersedes any
-  // uploaded layer (the menu's choice wins).
+  // uploaded layer (the menu's choice wins) — except the upload row itself,
+  // which is about to replace it with the user's own file.
   const handleMenuEvent = useCallback(
     (event: ModeEvent) => {
-      if (event.type === "itemSelected" && event.item?.kind === "template") setUploaded(null);
+      if (
+        event.type === "itemSelected" &&
+        event.item?.kind === "template" &&
+        event.item.id !== "upload"
+      ) {
+        setUploaded(null);
+      }
       handleModeEvent(event);
     },
     [handleModeEvent]
@@ -117,10 +143,12 @@ export default function HomePage() {
           <>
             <MediaLayer
               subscribe={subscribeSnapshot}
+              contentMode={status.contentMode}
               src={media}
               faceAlignEnabled={media === DEFAULT_MEDIA}
               effect={status.effect}
               motion={status.motion}
+              cameraVideoRef={videoRef}
             />
             <HandFrame subscribe={subscribeSnapshot} active={frameActive} debug={debug} />
             {menuOpen && (
@@ -128,10 +156,11 @@ export default function HomePage() {
                 subscribe={subscribeSnapshot}
                 mode={status.mode}
                 menuTop={status.menuTop}
-                selectionMode={status.selectionMode}
+                contentMode={status.contentMode}
                 template={status.template}
                 effect={status.effect}
                 motion={status.motion}
+                onUpload={() => fileInputRef.current?.click()}
                 onEvent={handleMenuEvent}
               />
             )}
@@ -159,9 +188,14 @@ export default function HomePage() {
             <div className="media-controls">
               <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleUpload} style={{ display: "none" }} />
               <button type="button" className="ghost-button" onClick={() => fileInputRef.current?.click()}>Upload Media</button>
-              {media !== DEFAULT_MEDIA && <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>}
+              {/* Only when a non-default template asset is live — in
+                  effect/motion mode there is no media to reset (the menu is
+                  the way back to TEMPLATE). */}
+              {media !== null && media !== DEFAULT_MEDIA && (
+                <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>
+              )}
               <span className="media-controls__name">
-                {media.startsWith("blob:") ? "uploaded" : media.split("/").pop()}
+                {media === null ? "" : media.startsWith("blob:") ? "uploaded" : media.split("/").pop()}
               </span>
             </div>
             <button type="button" className="ghost-button" onClick={handleStop}>Stop Camera</button>

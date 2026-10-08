@@ -46,7 +46,7 @@ const REGION_LABELS: Partial<Record<RegionKind, string>> = {
   "right-leg": "Right Leg",
 };
 
-const SELECTION_LABEL: Record<AppStatus["selectionMode"], string> = {
+const SELECTION_LABEL: Record<NonNullable<AppStatus["contentMode"]>, string> = {
   template: "Template",
   effect: "Effect",
   motion: "Motion",
@@ -80,13 +80,15 @@ export function StatusPanel({ status }: StatusPanelProps) {
       value: status.frame === "active" ? "Visible" : "Inactive",
       tone: status.frame === "active" ? "ok" : undefined,
     },
-    // The one live selection: template, effect and motion are mutually
+    // The one live content mode: template, effect and motion are mutually
     // exclusive, so the panel shows a single row naming the active mode
     // (see selectionPatch) instead of three rows that can never be live
-    // together.
+    // together. contentMode null = nothing is showing.
     {
       label: "Selection",
-      value: `${SELECTION_LABEL[status.selectionMode]} · ${status[status.selectionMode]}`,
+      value: status.contentMode
+        ? `${SELECTION_LABEL[status.contentMode]} · ${status[status.contentMode]}`
+        : "None",
     },
   ];
 
