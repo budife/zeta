@@ -7,6 +7,8 @@ import { HandFrame } from "@/components/HandFrame";
 import { MediaLayer } from "@/components/MediaLayer";
 import { StatusPanel } from "@/components/StatusPanel";
 import { useHandFrameEngine } from "@/hooks/useHandFrameEngine";
+import { MainMenu } from "@/components/MainMenu";
+import type { ModeEvent } from "@/lib/modes";
 
 /** Default media shown through the hand-made window. */
 const DEFAULT_MEDIA = "/vectors/template.svg";
@@ -14,9 +16,10 @@ const DEFAULT_MEDIA = "/vectors/template.svg";
 export default function HomePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [debug, setDebug] = useState(false);
-  // Media shown through the hand-made window. Defaults to the bundled template;
-  // the user can upload any image or video the browser can play.
-  const [media, setMedia] = useState(DEFAULT_MEDIA);
+  // An uploaded image/video overrides the selected template's asset; the
+  // template path itself is derived from the engine's menu pick. Object URLs
+  // are released on replace/unmount (the [media] effect below).
+  const [uploaded, setUploaded] = useState<string | null>(null);
   // Match the stage to the real camera frame so overlays stay aligned even for
   // 4:3 or square sensors (object-fit would otherwise crop the picture).
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
@@ -26,11 +29,14 @@ export default function HomePage() {
     startCamera,
     stopCamera,
     subscribeSnapshot,
+    handleModeEvent,
   } = useHandFrameEngine();
 
+  const media = uploaded ?? `/vectors/${status.template}.svg`;
   const cameraReady = status.camera === "ready";
   const modelsLoading = status.models === "loading";
   const frameActive = status.frame === "active";
+  const menuOpen = status.mode === "MENU_OPEN" || status.mode === "MENU_SELECT";
 
   const handleStart = useCallback(() => {
     void startCamera(videoRef.current);
@@ -53,20 +59,26 @@ export default function HomePage() {
   const handleUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setMedia((previous) => {
-      if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
-      return URL.createObjectURL(file);
-    });
+    setUploaded(URL.createObjectURL(file));
     // Reset so picking the same file again still fires onChange.
     event.target.value = "";
   }, []);
 
   const handleResetMedia = useCallback(() => {
-    setMedia((previous) => {
-      if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
-      return DEFAULT_MEDIA;
-    });
-  }, []);
+    setUploaded(null);
+    // "Use Template" also means: make template.svg the selected template.
+    handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "template" } });
+  }, [handleModeEvent]);
+
+  // Menu events reach the engine; a template pick also supersedes any
+  // uploaded layer (the menu's choice wins).
+  const handleMenuEvent = useCallback(
+    (event: ModeEvent) => {
+      if (event.type === "itemSelected" && event.item?.kind === "template") setUploaded(null);
+      handleModeEvent(event);
+    },
+    [handleModeEvent]
+  );
 
   return (
     <main className="app">
@@ -109,6 +121,17 @@ export default function HomePage() {
               faceAlignEnabled={media === DEFAULT_MEDIA}
             />
             <HandFrame subscribe={subscribeSnapshot} active={frameActive} debug={debug} />
+            {menuOpen && (
+              <MainMenu
+                subscribe={subscribeSnapshot}
+                mode={status.mode}
+                menuTop={status.menuTop}
+                template={status.template}
+                effect={status.effect}
+                motion={status.motion}
+                onEvent={handleMenuEvent}
+              />
+            )}
             <DebugOverlay subscribe={subscribeSnapshot} enabled={debug} />
           </>
         )}
@@ -134,7 +157,9 @@ export default function HomePage() {
               <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleUpload} style={{ display: "none" }} />
               <button type="button" className="ghost-button" onClick={() => fileInputRef.current?.click()}>Upload Media</button>
               {media !== DEFAULT_MEDIA && <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>}
-              <span className="media-controls__name">{media === DEFAULT_MEDIA ? "template.svg" : "uploaded"}</span>
+              <span className="media-controls__name">
+                {media.startsWith("blob:") ? "uploaded" : media.split("/").pop()}
+              </span>
             </div>
             <button type="button" className="ghost-button" onClick={handleStop}>Stop Camera</button>
           </>

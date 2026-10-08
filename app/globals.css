@@ -649,6 +649,96 @@ button {
   color: var(--text);
 }
 
+/* ----------------------------------------------------------- gesture menu */
+
+/* Full-stage layer in stage coordinates: rows are positioned by the SAME
+   stage-fraction boxes menuLayout() hands the hit-test, so what you see is
+   exactly what the fingertip can hit. The hand pointer is geometric, not a
+   mouse, so the panel itself ignores pointer events; rows opt back in so
+   they stay clickable/focusable for mouse and keyboard users. */
+.gesture-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.gesture-menu__panel {
+  position: absolute;
+  background: rgba(5, 6, 10, 0.78);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(12px);
+}
+
+.gesture-menu__title {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+}
+
+.gesture-menu__row {
+  position: absolute;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0 0.55rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.gesture-menu__row:hover,
+.gesture-menu__row--hover {
+  background: rgba(125, 211, 252, 0.1);
+  border-color: var(--stroke-strong);
+  color: var(--text);
+}
+
+.gesture-menu__row--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.gesture-menu__label {
+  flex: 1;
+}
+
+.gesture-menu__check {
+  font-size: 0.7rem;
+}
+
+/* Hold-progress bar: width driven by the --p CSS variable the hover tracker
+   writes straight to the DOM at frame rate (never through React state). */
+.gesture-menu__fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--accent);
+  opacity: 0;
+}
+
+.gesture-menu__row--hover .gesture-menu__fill {
+  opacity: 1;
+}
+
 /* --------------------------------------------------------------- responsive */
 
 @media (max-width: 560px) {

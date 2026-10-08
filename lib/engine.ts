@@ -28,6 +28,7 @@ import {
   type ModeEvent,
 } from "./modes";
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
+import { DEFAULT_SELECTION, TOP_LEVEL_ITEMS, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -161,6 +162,10 @@ export class HandFrameEngine {
     camera: "off",
     models: "loading",
     mode: INITIAL_MODE,
+    menuTop: null,
+    template: DEFAULT_SELECTION.template,
+    effect: DEFAULT_SELECTION.effect,
+    motion: DEFAULT_SELECTION.motion,
     hands: 0,
     frame: "inactive",
     face: "none",
@@ -213,6 +218,9 @@ export class HandFrameEngine {
    * Illegal events are no-ops, so callers never need the transition graph.
    */
   handleModeEvent(event: ModeEvent): void {
+    // Menu payloads are recorded BEFORE the mode moves, so a listener that
+    // reacts to the new mode already sees the pick that caused it.
+    this.recordMenuPick(event);
     const next = advanceMode(this.mode, event);
     this.applyMode(next);
     if (next === "RESETTING") {
@@ -222,6 +230,23 @@ export class HandFrameEngine {
       // instant and the whole chain settles within this one call.
       this.clearFrameState();
       this.applyMode(advanceMode(this.mode, { type: "resetDone" }));
+    }
+  }
+
+  /**
+   * Keeps `AppStatus`'s menu fields in sync with the payloads the menu
+   * renderer sends (`openSubmenu.top`, `itemSelected.item`). The machine
+   * itself never reads these — only the UI does, via status.
+   */
+  private recordMenuPick(event: ModeEvent): void {
+    if (event.type === "openSubmenu") {
+      const top = event.top as TopLevelItem | undefined;
+      if (top && TOP_LEVEL_ITEMS.includes(top)) this.patchStatus({ menuTop: top });
+    } else if (event.type === "itemSelected" && event.item) {
+      const { kind, id } = event.item;
+      if (kind === "template") this.patchStatus({ template: id });
+      else if (kind === "effect") this.patchStatus({ effect: id });
+      else if (kind === "motion") this.patchStatus({ motion: id });
     }
   }
 
@@ -235,7 +260,9 @@ export class HandFrameEngine {
    * The frame half of a reset: window, selection, face state, region lock —
    * everything that depends on the locked window. Shared by the camera-off
    * `reset()` and by the swipe-left gesture reset (Slice H), so the two can
-   * never drift apart on what "clearing everything" means.
+   * never drift apart on what "clearing everything" means. Menu picks
+   * (`menuTop`/template/effect/motion) deliberately stay: they are app
+   * state, and the menu must reopen showing what is active.
    */
   private clearFrameState(): void {
     this.selection = INITIAL_SELECTION;

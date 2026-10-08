@@ -42,7 +42,17 @@ import {
   INITIAL_MODE,
 } from "../lib/modes";
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand, type SwipeDebug } from "../lib/swipe";
-import { HoverTracker, MENU_CONFIG, TOP_LEVEL_ITEMS } from "../lib/menuModel";
+import {
+  HoverTracker,
+  MENU_CONFIG,
+  TOP_LEVEL_ITEMS,
+  TEMPLATE_ITEMS,
+  EFFECT_ITEMS,
+  MOTION_ITEMS,
+  DEFAULT_SELECTION,
+  menuLayout,
+  hitTestMenu,
+} from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
 import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
@@ -1697,6 +1707,151 @@ console.log("\n[33] engine reset — swipe-left settles the RESETTING chain in I
   eng.handleModeEvent({ type: "frameLocked" });
   check("no lock without a fresh menu pick after reset", seen.mode === "IDLE", String(seen.mode));
 
+  eng.dispose();
+}
+
+console.log("[34] menu structure, stage layout, hit-test, engine recording (Slice D)");
+{
+  // ---- structure & defaults (recommendations 1 & 2) ----
+  check(
+    "TEMPLATE is one flat list of 11",
+    TEMPLATE_ITEMS.length === 11 && TEMPLATE_ITEMS[0].id === "template",
+    String(TEMPLATE_ITEMS.length)
+  );
+  check(
+    "the 10 characters follow in order",
+    TEMPLATE_ITEMS[1].id === "character-01" && TEMPLATE_ITEMS[10].id === "character-10",
+    TEMPLATE_ITEMS.map((i) => i.id).join(",")
+  );
+  check(
+    "EFFECTS = None + the 5 MVP effects",
+    EFFECT_ITEMS.map((i) => i.id).join(",") === "none,blur,rain,snow,cyberpunk,glitch",
+    EFFECT_ITEMS.map((i) => i.id).join(",")
+  );
+  check(
+    "MOTION = None + the 5 MVP motions",
+    MOTION_ITEMS.map((i) => i.id).join(",") === "none,shake,float,zoom,pulse,parallax",
+    MOTION_ITEMS.map((i) => i.id).join(",")
+  );
+  check(
+    "defaults: template.svg, no effect, no motion",
+    DEFAULT_SELECTION.template === "template" &&
+      DEFAULT_SELECTION.effect === "none" &&
+      DEFAULT_SELECTION.motion === "none",
+    JSON.stringify(DEFAULT_SELECTION)
+  );
+
+  // ---- layout: one source of truth for rendering AND hit-testing ----
+  const open = menuLayout("MENU_OPEN", null);
+  check(
+    "MENU_OPEN lists only the 3 top entries",
+    open.rows.length === 3 && open.rows.every((r) => r.kind === "top"),
+    open.rows.map((r) => r.id).join(",")
+  );
+  const selT = menuLayout("MENU_SELECT", "TEMPLATE");
+  check(
+    "MENU_SELECT: 3 tabs + 11 template items",
+    selT.rows.length === 14 && selT.rows.filter((r) => r.kind === "sub").length === 11,
+    String(selT.rows.length)
+  );
+  const selE = menuLayout("MENU_SELECT", "EFFECTS");
+  check(
+    "EFFECTS submenu: 3 tabs + 6 items",
+    selE.rows.length === 9 && selE.rows.filter((r) => r.kind === "sub").length === 6,
+    String(selE.rows.length)
+  );
+  const allBoxes = [open, selT, selE].flatMap((l) => [l.panel, l.title, ...l.rows.map((r) => r.box)]);
+  check(
+    "every box stays inside the stage (0..1)",
+    allBoxes.every((b) => b.x >= 0 && b.y >= 0 && b.x + b.width <= 1 && b.y + b.height <= 1),
+    JSON.stringify(allBoxes.find((b) => b.x + b.width > 1 || b.y + b.height > 1))
+  );
+  for (const layout of [open, selT, selE]) {
+    const rows = layout.rows;
+    let ordered = true;
+    let enclosed = true;
+    for (let i = 0; i < rows.length; i++) {
+      const b = rows[i].box;
+      if (
+        b.x < layout.panel.x ||
+        b.y < layout.panel.y ||
+        b.x + b.width > layout.panel.x + layout.panel.width ||
+        b.y + b.height > layout.panel.y + layout.panel.height
+      ) {
+        enclosed = false;
+      }
+      if (i > 0) {
+        const prev = rows[i - 1].box;
+        if (prev.y + prev.height > b.y + 1e-12) ordered = false; // rows never overlap
+      }
+    }
+    check("rows sit inside the panel", enclosed);
+    check("rows never overlap", ordered);
+  }
+
+  // ---- hit-test against the same boxes the renderer draws ----
+  const first = selT.rows[0].box;
+  const inside = { x: first.x + first.width / 2, y: first.y + first.height / 2 };
+  check("pointer over a row hits it", hitTestMenu(selT.rows, inside) === selT.rows[0].id);
+  check("pointer off-menu misses", hitTestMenu(selT.rows, { x: 0.1, y: 0.5 }) === null);
+  const gapRow = selT.rows[0];
+  const nextRow = selT.rows[1];
+  check(
+    "pointer in the gap between rows misses",
+    hitTestMenu(selT.rows, {
+      x: gapRow.box.x + gapRow.box.width / 2,
+      y: (gapRow.box.y + gapRow.box.height + nextRow.box.y) / 2,
+    }) === null
+  );
+  check("a null pointer (no hand) misses", hitTestMenu(selT.rows, null) === null);
+
+  // ---- the REAL engine records menu picks into status ----
+  const eng = new HandFrameEngine();
+  let st: {
+    mode?: string;
+    menuTop?: string | null;
+    template?: string;
+    effect?: string;
+    motion?: string;
+  } = {};
+  eng.onStatus((s) => {
+    st = { mode: s.mode, menuTop: s.menuTop, template: s.template, effect: s.effect, motion: s.motion };
+  });
+  // Status only emits on change — nudge it once so the listener has the
+  // engine's initial values to report.
+  eng.setModelsStatus("ready");
+  check(
+    "fresh engine starts on the defaults",
+    st.template === "template" && st.effect === "none" && st.motion === "none" && st.menuTop === null,
+    JSON.stringify(st)
+  );
+  eng.handleModeEvent({ type: "openMenu" });
+  eng.handleModeEvent({ type: "openSubmenu", top: "EFFECTS" });
+  check(
+    "engine records which submenu is open",
+    st.menuTop === "EFFECTS" && st.mode === "MENU_SELECT",
+    JSON.stringify(st)
+  );
+  eng.handleModeEvent({ type: "itemSelected", item: { kind: "effect", id: "blur" } });
+  check(
+    "engine records the picked effect and moves on",
+    st.effect === "blur" && st.mode === "FRAME_SEARCH",
+    JSON.stringify(st)
+  );
+  eng.handleModeEvent({ type: "openMenu" });
+  eng.handleModeEvent({ type: "openSubmenu", top: "TEMPLATE" });
+  eng.handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "character-05" } });
+  check("engine records the picked template", st.template === "character-05", String(st.template));
+  eng.handleModeEvent({ type: "frameLocked" });
+  check("frame lock still works after the picks", st.mode === "FRAME_LOCKED", String(st.mode));
+  // A gesture reset clears the FRAME, not the user's choices (they are app
+  // state: the menu reopens showing what is active).
+  eng.handleModeEvent({ type: "reset" });
+  check(
+    "gesture reset keeps the picks but clears the frame",
+    st.mode === "IDLE" && st.template === "character-05" && st.effect === "blur",
+    JSON.stringify(st)
+  );
   eng.dispose();
 }
 

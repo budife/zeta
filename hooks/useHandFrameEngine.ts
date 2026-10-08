@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HandFrameEngine } from "@/lib/engine";
 import { INITIAL_MODE } from "@/lib/modes";
+import { DEFAULT_SELECTION } from "@/lib/menuModel";
 import type { AppStatus, Snapshot } from "@/lib/types";
 
 const DEFAULT_STATUS: AppStatus = {
   camera: "off",
   models: "loading",
   mode: INITIAL_MODE,
+  menuTop: null,
+  template: DEFAULT_SELECTION.template,
+  effect: DEFAULT_SELECTION.effect,
+  motion: DEFAULT_SELECTION.motion,
   hands: 0,
   frame: "inactive",
   face: "none",
@@ -112,11 +117,17 @@ export function useHandFrameEngine() {
     [engine]
   );
 
+  const handleModeEvent = useCallback(
+    (event: import("@/lib/modes").ModeEvent) => engine.handleModeEvent(event),
+    [engine]
+  );
+
   return {
     status,
     startCamera,
     stopCamera,
     subscribeSnapshot,
+    handleModeEvent,
     engine,
   };
 }

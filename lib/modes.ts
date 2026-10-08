@@ -41,16 +41,31 @@ export type AppMode =
 export const INITIAL_MODE: AppMode = "IDLE";
 
 /**
+ * A completed menu pick, as carried by `itemSelected`. Self-contained (this
+ * file has no imports), so the menu renderer and the engine agree on the
+ * shape without the machine ever looking inside it.
+ */
+export type MenuPick = {
+  kind: "template" | "effect" | "motion";
+  id: string;
+};
+
+/**
  * Events that can move the machine. Named after what happened in the UI,
  * not after the mode being entered, so callers never need to know the graph.
+ *
+ * The two menu events carry optional payloads (which submenu opened, which
+ * item was picked). The machine itself never reads them — it only routes on
+ * `type` — but the engine records them into `AppStatus`, so the payloads are
+ * part of the contract between the menu renderer and the engine.
  */
 export type ModeEvent =
   /** Two-finger swipe down (IDLE / FRAME_SEARCH / FRAME_LOCKED). */
   | { type: "openMenu" }
-  /** Pointer picked TEMPLATE / EFFECTS / MOTION. */
-  | { type: "openSubmenu" }
+  /** Pointer picked TEMPLATE / EFFECTS / MOTION (`top` = that entry). */
+  | { type: "openSubmenu"; top?: string }
   /** Pointer finished hold-selecting an item — frame search becomes enabled. */
-  | { type: "itemSelected" }
+  | { type: "itemSelected"; item?: MenuPick }
   /** The selection machine locked a window. */
   | { type: "frameLocked" }
   /** The selection machine released the window (sustained hand loss). */

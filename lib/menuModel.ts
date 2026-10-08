@@ -11,10 +11,13 @@
  *     hold from zero. Time never carries across items.
  *
  * The tracker is layout-agnostic: the renderer hit-tests the pointer against
- * the rendered boxes (stage coordinates via the single coordinate chain) and
- * passes the hovered item's id in. Nothing here knows about pixels, DOM, or
- * the camera.
+ * `menuLayout()`'s boxes (stage coordinates via the single coordinate chain)
+ * and passes the hovered item's id in. The SAME boxes drive both the CSS
+ * placement and the hit-test, so what you see is exactly what you can point
+ * at. Nothing here knows about pixels of the camera, the DOM, or MediaPipe.
  */
+
+import type { AppMode } from "./modes";
 
 export const MENU_CONFIG = {
   /**
@@ -28,6 +31,145 @@ export const MENU_CONFIG = {
 export const TOP_LEVEL_ITEMS = ["TEMPLATE", "EFFECTS", "MOTION"] as const;
 
 export type TopLevelItem = (typeof TOP_LEVEL_ITEMS)[number];
+
+/** One selectable menu line: a stable id (selections, asset paths) + a label. */
+export type MenuItemDef = { id: string; label: string };
+
+const characters: MenuItemDef[] = Array.from({ length: 10 }, (_, i) => {
+  const n = String(i + 1).padStart(2, "0");
+  return { id: `character-${n}`, label: `Character ${n}` };
+});
+
+/** TEMPLATE: one flat list of the bundled assets (recommendation 1). */
+export const TEMPLATE_ITEMS: MenuItemDef[] = [{ id: "template", label: "Template" }, ...characters];
+
+/** EFFECTS: None + the 5 MVP effects (decision 4). */
+export const EFFECT_ITEMS: MenuItemDef[] = [
+  { id: "none", label: "None" },
+  { id: "blur", label: "Blur" },
+  { id: "rain", label: "Rain" },
+  { id: "snow", label: "Snow" },
+  { id: "cyberpunk", label: "Cyberpunk" },
+  { id: "glitch", label: "Glitch" },
+];
+
+/** MOTION: None + the 5 MVP motions (decision 4 / spec motion list). */
+export const MOTION_ITEMS: MenuItemDef[] = [
+  { id: "none", label: "None" },
+  { id: "shake", label: "Shake" },
+  { id: "float", label: "Float" },
+  { id: "zoom", label: "Zoom" },
+  { id: "pulse", label: "Pulse" },
+  { id: "parallax", label: "Parallax" },
+];
+
+/** Submenu body per top-level entry. */
+export const SUBMENUS: Record<TopLevelItem, MenuItemDef[]> = {
+  TEMPLATE: TEMPLATE_ITEMS,
+  EFFECTS: EFFECT_ITEMS,
+  MOTION: MOTION_ITEMS,
+};
+
+/**
+ * What is active until the user picks something else (recommendation 2):
+ * the bundled template, no effect, no motion. The engine seeds `AppStatus`
+ * from this, so the menu's highlight and the engine agree by construction.
+ */
+export const DEFAULT_SELECTION = { template: "template", effect: "none", motion: "none" } as const;
+
+// ---------------------------------------------------------------------------
+// Layout — stage FRACTIONS (0..1), the same space the mirrored pointer maps
+// to through toStageFraction(). One function feeds both the renderer's CSS
+// and the hit-test, so they cannot drift.
+// ---------------------------------------------------------------------------
+
+/** An axis-aligned box in stage fractions (0..1 of the stage). */
+export type MenuBox = { x: number; y: number; width: number; height: number };
+
+export type MenuRow = {
+  id: string;
+  /** `top` = the three tabs; `sub` = the open submenu's items. */
+  kind: "top" | "sub";
+  box: MenuBox;
+};
+
+export type MenuLayout = {
+  /** Panel backdrop behind title + rows. */
+  panel: MenuBox;
+  /** Decorative heading (not interactive). */
+  title: MenuBox;
+  /** Interactive rows, top to bottom — the hit-test targets. */
+  rows: MenuRow[];
+};
+
+/**
+ * Geometry constants, tuned to keep the longest list (TEMPLATE: 3 tabs +
+ * 11 items = 14 rows) inside a 16:9 stage with margin to spare.
+ */
+const L = {
+  right: 0.035, // panel's distance from the stage's right edge
+  top: 0.035,
+  width: 0.17,
+  pad: 0.012, // inner padding of the panel (stage fraction)
+  titleH: 0.04,
+  rowH: 0.048,
+  gap: 0.006, // between rows
+  bodyGap: 0.016, // extra break between the tabs and the submenu body
+} as const;
+
+/**
+ * The menu's boxes for this mode. In MENU_OPEN only the three top tabs are
+ * interactive; MENU_SELECT adds the open submenu's body below them. `top`
+ * falls back to the first entry so MENU_SELECT always has a body.
+ */
+export function menuLayout(mode: AppMode, top: TopLevelItem | null): MenuLayout {
+  const activeTop: TopLevelItem = top ?? TOP_LEVEL_ITEMS[0];
+  const x = 1 - L.right - L.width;
+  const rowsX = x + L.pad;
+  const rowsW = L.width - 2 * L.pad;
+  const titleY = L.top + L.pad;
+  const rowsStart = titleY + L.titleH + L.gap;
+
+  const rows: MenuRow[] = TOP_LEVEL_ITEMS.map((id, i) => ({
+    id,
+    kind: "top" as const,
+    box: { x: rowsX, y: rowsStart + i * (L.rowH + L.gap), width: rowsW, height: L.rowH },
+  }));
+
+  let lastBottom = rows[rows.length - 1].box.y + L.rowH;
+  if (mode === "MENU_SELECT") {
+    const bodyStart = lastBottom + L.gap + L.bodyGap;
+    for (const [j, item] of SUBMENUS[activeTop].entries()) {
+      rows.push({
+        id: item.id,
+        kind: "sub" as const,
+        box: { x: rowsX, y: bodyStart + j * (L.rowH + L.gap), width: rowsW, height: L.rowH },
+      });
+    }
+    lastBottom = rows[rows.length - 1].box.y + L.rowH;
+  }
+
+  return {
+    panel: { x, y: L.top, width: L.width, height: lastBottom + L.pad - L.top },
+    title: { x: rowsX, y: titleY, width: rowsW, height: L.titleH },
+    rows,
+  };
+}
+
+/**
+ * Which row the pointer is over, in stage fractions. Null for no pointer or
+ * off-menu (including the gaps between rows — those belong to nobody).
+ */
+export function hitTestMenu(rows: MenuRow[], point: { x: number; y: number } | null): string | null {
+  if (!point) return null;
+  for (const row of rows) {
+    const b = row.box;
+    if (point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height) {
+      return row.id;
+    }
+  }
+  return null;
+}
 
 /** What the renderer should show this frame. */
 export type HoverReadout = {

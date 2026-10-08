@@ -81,6 +81,21 @@ export type AppStatus = {
    * value.
    */
   mode: AppMode;
+  /**
+   * Which top-level entry the open submenu belongs to (null until the first
+   * pick). Recorded by the engine from `openSubmenu`'s payload — the menu
+   * renderer's tabs and highlight read it from here.
+   */
+  menuTop: import("./menuModel").TopLevelItem | null;
+  /**
+   * Active menu selections — seeded from `DEFAULT_SELECTION` and only
+   * changed by `itemSelected` payloads. They are APP state, not frame state:
+   * a gesture reset or camera-off keeps them, so the menu always reopens
+   * showing what is active.
+   */
+  template: string;
+  effect: string;
+  motion: string;
   hands: number;
   frame: "inactive" | "active";
   face: FaceState;
