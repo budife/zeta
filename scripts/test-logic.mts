@@ -55,6 +55,8 @@ import {
   menuLayout,
   hitTestMenu,
   selectionPatch,
+  isLiveRow,
+  type TopLevelItem,
 } from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
@@ -2028,6 +2030,57 @@ console.log("\n[37] selections are mutually exclusive — one mode at a time (us
     JSON.stringify(st)
   );
   eng.dispose();
+}
+
+console.log("\n[38] live-row highlight — only the live category may show a check");
+{
+  // After picking blur the mode is "effect" and template sits at its default.
+  // The TEMPLATE submenu must NOT mark "Template" as live: the value matches,
+  // but the category is not the active one.
+  const afterEffect = { template: "template", effect: "blur", motion: "none" };
+  check(
+    "dead submenu never marks its default value live",
+    isLiveRow("sub", "template", "TEMPLATE", "effect", afterEffect) === false
+  );
+  check(
+    "the live category's own tab is live",
+    isLiveRow("top", "EFFECTS", "TEMPLATE", "effect", afterEffect) === true
+  );
+  check(
+    "a dead category's tab is not live",
+    isLiveRow("top", "TEMPLATE", "TEMPLATE", "effect", afterEffect) === false
+  );
+  check(
+    "the live item is marked inside its own open submenu",
+    isLiveRow("sub", "blur", "EFFECTS", "effect", afterEffect) === true
+  );
+  check(
+    "another item in the live category is not marked",
+    isLiveRow("sub", "rain", "EFFECTS", "effect", afterEffect) === false
+  );
+  check(
+    "a live template marks its own item, not the default",
+    isLiveRow("sub", "character-05", "TEMPLATE", "template", {
+      template: "character-05",
+      effect: "none",
+      motion: "none",
+    }) === true
+  );
+  check(
+    "the default template row is not live when a character is picked",
+    isLiveRow("sub", "template", "TEMPLATE", "template", {
+      template: "character-05",
+      effect: "none",
+      motion: "none",
+    }) === false
+  );
+
+  // Exactly one check across a whole rendered menu.
+  const layout = menuLayout("MENU_SELECT", "TEMPLATE");
+  const liveCount = layout.rows.filter((row) =>
+    isLiveRow(row.kind, row.id, "TEMPLATE", "effect", afterEffect)
+  ).length;
+  check("whole menu shows exactly one live row (the tab)", liveCount === 1, String(liveCount));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

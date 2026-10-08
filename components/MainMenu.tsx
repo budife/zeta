@@ -5,6 +5,7 @@ import {
   HoverTracker,
   SUBMENUS,
   hitTestMenu,
+  isLiveRow,
   menuLayout,
   type MenuRow,
   type TopLevelItem,
@@ -30,13 +31,15 @@ export type MainMenuProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
   mode: AppMode;
   menuTop: TopLevelItem | null;
+  /** Which category holds THE selection (the other two are at their defaults). */
+  selectionMode: MenuPick["kind"];
   template: string;
   effect: string;
   motion: string;
   onEvent: (event: ModeEvent) => void;
 };
 
-/** Which selection highlights each top-level tab. */
+/** Which selection category a top-level entry owns. */
 const KIND_BY_TOP: Record<TopLevelItem, MenuPick["kind"]> = {
   TEMPLATE: "template",
   EFFECTS: "effect",
@@ -59,6 +62,7 @@ export function MainMenu({
   subscribe,
   mode,
   menuTop,
+  selectionMode,
   template,
   effect,
   motion,
@@ -146,10 +150,10 @@ export function MainMenu({
         {title}
       </div>
       {layout.rows.map((row) => {
-        const active =
-          row.kind === "top"
-            ? menuTop === row.id
-            : menuTop !== null && selections[KIND_BY_TOP[menuTop]] === row.id;
+        // The check follows the LIVE category (isLiveRow), not just a
+        // matching value — otherwise the reset default of a dead category
+        // would look selected.
+        const active = isLiveRow(row.kind, row.id, menuTop, selectionMode, selections);
         const label =
           row.kind === "top"
             ? row.id

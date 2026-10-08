@@ -128,6 +128,7 @@ export default function HomePage() {
                 subscribe={subscribeSnapshot}
                 mode={status.mode}
                 menuTop={status.menuTop}
+                selectionMode={status.selectionMode}
                 template={status.template}
                 effect={status.effect}
                 motion={status.motion}

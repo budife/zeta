@@ -178,6 +178,39 @@ export function selectionPatch(kind: MenuPick["kind"], id: string): {
   };
 }
 
+/** Which selection category a top-level entry owns. */
+const CATEGORY_BY_TOP: Record<TopLevelItem, MenuPick["kind"]> = {
+  TEMPLATE: "template",
+  EFFECTS: "effect",
+  MOTION: "motion",
+};
+
+/**
+ * Whether a menu row may show the "this is selected" check.
+ *
+ * The value-based check that used to live in the renderer had a bug: after
+ * picking blur the mode is effect and the template sits at its DEFAULT
+ * ("template"), so the TEMPLATE submenu still checked its "Template" row —
+ * looking selected when nothing in that category was live. The rule here is
+ * category-first: a row is live only when its CATEGORY is the active one,
+ * and then only when its value is the active value. That yields exactly one
+ * live row per menu: the tab of the live category (when its submenu is
+ * closed), or the picked item inside it (when it is open).
+ */
+export function isLiveRow(
+  kind: "top" | "sub",
+  id: string,
+  openTop: TopLevelItem | null,
+  selectionMode: MenuPick["kind"],
+  selection: { template: string; effect: string; motion: string }
+): boolean {
+  if (kind === "top") return CATEGORY_BY_TOP[id as TopLevelItem] === selectionMode;
+  if (!openTop) return false;
+  const category = CATEGORY_BY_TOP[openTop];
+  if (selectionMode !== category) return false;
+  return selection[category] === id;
+}
+
 /**
  * Which row the pointer is over, in stage fractions. Null for no pointer or
  * off-menu (including the gaps between rows — those belong to nobody).
