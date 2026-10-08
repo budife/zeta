@@ -213,13 +213,39 @@ export class HandFrameEngine {
    * Illegal events are no-ops, so callers never need the transition graph.
    */
   handleModeEvent(event: ModeEvent): void {
-    this.applyMode(advanceMode(this.mode, event));
+    const next = advanceMode(this.mode, event);
+    this.applyMode(next);
+    if (next === "RESETTING") {
+      // Slice H: the RESETTING side effects run synchronously. The machine
+      // models "clearing" as its own state (RESETTING -> resetDone -> IDLE)
+      // so an animated reset could observe it later; today the clear is
+      // instant and the whole chain settles within this one call.
+      this.clearFrameState();
+      this.applyMode(advanceMode(this.mode, { type: "resetDone" }));
+    }
   }
 
   private applyMode(next: AppMode): void {
     if (next === this.mode) return;
     this.mode = next;
     this.patchStatus({ mode: next });
+  }
+
+  /**
+   * The frame half of a reset: window, selection, face state, region lock —
+   * everything that depends on the locked window. Shared by the camera-off
+   * `reset()` and by the swipe-left gesture reset (Slice H), so the two can
+   * never drift apart on what "clearing everything" means.
+   */
+  private clearFrameState(): void {
+    this.selection = INITIAL_SELECTION;
+    this.lastFaceBox = null;
+    this.lastFaceAt = 0;
+    this.faceState = "none";
+    this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
+    this.regionLock = { kind: null, label: "—", confidence: 0 };
+    this.tracker.reset();
+    this.patchStatus({ frame: "inactive", face: "none" });
   }
 
   // ------------------------------------------------------------------- models
@@ -342,12 +368,7 @@ export class HandFrameEngine {
   /** Resets all tracking state, e.g. when the camera is turned off. */
   reset(): void {
     this.stop();
-    this.selection = INITIAL_SELECTION;
-    this.lastFaceBox = null;
-    this.lastFaceAt = 0;
-    this.faceState = "none";
-    this.regionLock = { kind: null, label: "—", confidence: 0 };
-    this.tracker.reset();
+    this.clearFrameState();
     this.swipeTracker.reset();
     this.mode = INITIAL_MODE;
     this.patchStatus({
@@ -427,11 +448,11 @@ export class HandFrameEngine {
     // fresh) and picks its hand via pickSwipeHand(): label "Right" first,
     // image-left fallback — MediaPipe's handedness assumes a mirrored input
     // while we feed it the raw frame, so labels can come back reversed and
-    // must not be the only gate. Where swipeDown is allowed the event is
-    // consumed: IDLE, FRAME_SEARCH, and — with the geometry-preservation
-    // guard in the frame feed below — FRAME_LOCKED too (TEST 11: the menu
-    // opens over the SAME window). swipeLeft is detected but not consumed
-    // yet: the reset path needs its RESETTING side effects first (Slice H).
+    // must not be the only gate. swipeDown opens the menu wherever it is
+    // allowed (IDLE / FRAME_SEARCH / FRAME_LOCKED — the geometry-preservation
+    // guard in the frame feed below keeps the locked window intact while the
+    // sign is held, TEST 11); swipeLeft resets from FRAME_LOCKED, running its
+    // RESETTING side effects synchronously inside handleModeEvent (Slice H).
     const swipeHandIndex = pickSwipeHand(
       pixelHands,
       handResult.handednesses ?? null,
@@ -443,6 +464,9 @@ export class HandFrameEngine {
     );
     if (swipe === "swipeDown" && gestureAllowed(this.mode, "swipeDown")) {
       this.handleModeEvent({ type: "openMenu" });
+    }
+    if (swipe === "swipeLeft" && gestureAllowed(this.mode, "swipeLeft")) {
+      this.handleModeEvent({ type: "reset" });
     }
 
     // -------------------------------------------------------------- pointer

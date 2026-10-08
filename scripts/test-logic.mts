@@ -5,6 +5,7 @@
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
+import { HandFrameEngine } from "../lib/engine";
 import {
   clipPathPolygon,
   mediaMatrix,
@@ -1654,6 +1655,49 @@ console.log("\n[32] menu dwell — hover highlights, hold 400ms selects (TEST 4 
     TOP_LEVEL_ITEMS.join(",") === "TEMPLATE,EFFECTS,MOTION",
     TOP_LEVEL_ITEMS.join(",")
   );
+}
+
+console.log("\n[33] engine reset — swipe-left settles the RESETTING chain in IDLE (Slice H)");
+{
+  // The mode machine alone would park in RESETTING forever: the engine must
+  // run the RESETTING side effects (clear window/selection/face) and settle
+  // the chain with resetDone — synchronously, in the same call, so no tick
+  // is needed to observe it. This drives the REAL engine class:
+  // handleModeEvent needs no camera, no MediaPipe, no video element.
+  const eng = new HandFrameEngine();
+  let seen: { mode?: string; frame?: string; face?: string } = {};
+  eng.onStatus((s) => {
+    seen = { ...seen, mode: s.mode, frame: s.frame, face: s.face };
+  });
+
+  // Walk the menu chain to a locked frame, exactly as the UI would.
+  eng.handleModeEvent({ type: "openMenu" });
+  eng.handleModeEvent({ type: "openSubmenu" });
+  check("engine walks into MENU_SELECT", seen.mode === "MENU_SELECT", String(seen.mode));
+  eng.handleModeEvent({ type: "itemSelected" });
+  check("engine reaches FRAME_SEARCH after the pick", seen.mode === "FRAME_SEARCH", String(seen.mode));
+  eng.handleModeEvent({ type: "frameLocked" });
+  check("engine reaches FRAME_LOCKED", seen.mode === "FRAME_LOCKED", String(seen.mode));
+
+  // The swipe-left event, exactly as the detector will emit it (Slice H).
+  eng.handleModeEvent({ type: "reset" });
+  check(
+    "the engine settles the RESETTING chain in IDLE — never parked",
+    seen.mode === "IDLE",
+    String(seen.mode)
+  );
+  // Pins the contract the live flow relies on: when the camera keeps
+  // running after a gesture reset, the frame and face state must read
+  // cleared the moment the reset lands (the next tick would agree anyway).
+  check("reset marks the frame inactive", seen.frame === "inactive", String(seen.frame));
+  check("reset clears the face state", seen.face === "none", String(seen.face));
+
+  // Spec AK / TEST 2 invariant after a reset: no lock without a fresh menu
+  // pick — frameLocked from IDLE is a no-op.
+  eng.handleModeEvent({ type: "frameLocked" });
+  check("no lock without a fresh menu pick after reset", seen.mode === "IDLE", String(seen.mode));
+
+  eng.dispose();
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);
