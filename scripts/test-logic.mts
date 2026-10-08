@@ -54,6 +54,7 @@ import {
   DEFAULT_SELECTION,
   menuLayout,
   hitTestMenu,
+  selectionPatch,
 } from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
@@ -1844,14 +1845,19 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   eng.handleModeEvent({ type: "openSubmenu", top: "TEMPLATE" });
   eng.handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "character-05" } });
   check("engine records the picked template", st.template === "character-05", String(st.template));
+  check(
+    "template pick retired the effect (categories are exclusive)",
+    st.effect === "none" && st.motion === "none",
+    JSON.stringify(st)
+  );
   eng.handleModeEvent({ type: "frameLocked" });
   check("frame lock still works after the picks", st.mode === "FRAME_LOCKED", String(st.mode));
-  // A gesture reset clears the FRAME, not the user's choices (they are app
-  // state: the menu reopens showing what is active).
+  // A gesture reset clears the FRAME, not the user's choice (it is app state:
+  // the menu reopens showing what is active).
   eng.handleModeEvent({ type: "reset" });
   check(
-    "gesture reset keeps the picks but clears the frame",
-    st.mode === "IDLE" && st.template === "character-05" && st.effect === "blur",
+    "gesture reset keeps the pick but clears the frame",
+    st.mode === "IDLE" && st.template === "character-05",
     JSON.stringify(st)
   );
   eng.dispose();
@@ -1942,6 +1948,86 @@ console.log("\n[36] pinch — thumb-index gesture and the double-pinch effect cy
     "open first hand + pinching second hand still counts",
     twoHands.update([hand(50), hand(30)], 0) === false // first (aggregate) pinch
   );
+}
+
+console.log("\n[37] selections are mutually exclusive — one mode at a time (user rule)");
+{
+  // selectionPatch is the single source of the rule: a pick in one category
+  // becomes THE selection and pushes the other two back to their defaults.
+  const templatePick = selectionPatch("template", "character-05");
+  check(
+    "template pick: template set, effect/motion reset, mode recorded",
+    templatePick.selectionMode === "template" &&
+      templatePick.template === "character-05" &&
+      templatePick.effect === DEFAULT_SELECTION.effect &&
+      templatePick.motion === DEFAULT_SELECTION.motion,
+    JSON.stringify(templatePick)
+  );
+  const effectPick = selectionPatch("effect", "cyberpunk");
+  check(
+    "effect pick: effect set, template/motion reset",
+    effectPick.selectionMode === "effect" &&
+      effectPick.effect === "cyberpunk" &&
+      effectPick.template === DEFAULT_SELECTION.template &&
+      effectPick.motion === DEFAULT_SELECTION.motion,
+    JSON.stringify(effectPick)
+  );
+  const motionPick = selectionPatch("motion", "float");
+  check(
+    "motion pick: motion set, template/effect reset",
+    motionPick.selectionMode === "motion" &&
+      motionPick.motion === "float" &&
+      motionPick.template === DEFAULT_SELECTION.template &&
+      motionPick.effect === DEFAULT_SELECTION.effect,
+    JSON.stringify(motionPick)
+  );
+
+  // The engine must apply the same rule through the real event path, so a
+  // pick made in the menu never leaves two categories live at once.
+  const eng = new HandFrameEngine();
+  type Sel = { mode: string; template: string; effect: string; motion: string };
+  let st: Sel = { mode: "", template: "", effect: "", motion: "" };
+  eng.onStatus((s) => {
+    st = { mode: s.selectionMode, template: s.template, effect: s.effect, motion: s.motion };
+  });
+  eng.setModelsStatus("ready"); // force the initial emission
+  check(
+    "fresh engine reports template mode on the defaults",
+    st.mode === "template" && st.template === "template" && st.effect === "none" && st.motion === "none",
+    JSON.stringify(st)
+  );
+
+  const pick = (top: string, kind: "template" | "effect" | "motion", id: string) => {
+    eng.handleModeEvent({ type: "openMenu" });
+    eng.handleModeEvent({ type: "openSubmenu", top });
+    eng.handleModeEvent({ type: "itemSelected", item: { kind, id } });
+  };
+
+  pick("TEMPLATE", "template", "character-05");
+  check(
+    "character pick leaves nothing else live",
+    st.mode === "template" && st.template === "character-05" && st.effect === "none" && st.motion === "none",
+    JSON.stringify(st)
+  );
+  pick("EFFECTS", "effect", "cyberpunk");
+  check(
+    "cyberpunk pick drops the character and the motion",
+    st.mode === "effect" && st.template === "template" && st.effect === "cyberpunk" && st.motion === "none",
+    JSON.stringify(st)
+  );
+  pick("MOTION", "motion", "float");
+  check(
+    "float pick drops the effect",
+    st.mode === "motion" && st.template === "template" && st.effect === "none" && st.motion === "float",
+    JSON.stringify(st)
+  );
+  pick("TEMPLATE", "template", "template");
+  check(
+    "default template row settles everything back to defaults",
+    st.mode === "template" && st.template === "template" && st.effect === "none" && st.motion === "none",
+    JSON.stringify(st)
+  );
+  eng.dispose();
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

@@ -46,6 +46,12 @@ const REGION_LABELS: Partial<Record<RegionKind, string>> = {
   "right-leg": "Right Leg",
 };
 
+const SELECTION_LABEL: Record<AppStatus["selectionMode"], string> = {
+  template: "Template",
+  effect: "Effect",
+  motion: "Motion",
+};
+
 /**
  * The small live status line under the stage, exactly as specified:
  * Camera / Hands / Frame / Face / Vector.
@@ -74,11 +80,14 @@ export function StatusPanel({ status }: StatusPanelProps) {
       value: status.frame === "active" ? "Visible" : "Inactive",
       tone: status.frame === "active" ? "ok" : undefined,
     },
-    // Active menu selections — the fastest way to confirm a pick registered
-    // (the menu highlight closes with the menu; this row outlives it).
-    { label: "Template", value: status.template },
-    { label: "Effect", value: status.effect },
-    { label: "Motion", value: status.motion },
+    // The one live selection: template, effect and motion are mutually
+    // exclusive, so the panel shows a single row naming the active mode
+    // (see selectionPatch) instead of three rows that can never be live
+    // together.
+    {
+      label: "Selection",
+      value: `${SELECTION_LABEL[status.selectionMode]} · ${status[status.selectionMode]}`,
+    },
   ];
 
   return (

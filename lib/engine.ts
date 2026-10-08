@@ -30,7 +30,7 @@ import {
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
 import { PinchCycleDetector } from "./pinch";
 import { nextEffect } from "./effects";
-import { DEFAULT_SELECTION, TOP_LEVEL_ITEMS, type TopLevelItem } from "./menuModel";
+import { DEFAULT_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -167,6 +167,7 @@ export class HandFrameEngine {
     models: "loading",
     mode: INITIAL_MODE,
     menuTop: null,
+    selectionMode: "template",
     template: DEFAULT_SELECTION.template,
     effect: DEFAULT_SELECTION.effect,
     motion: DEFAULT_SELECTION.motion,
@@ -247,10 +248,9 @@ export class HandFrameEngine {
       const top = event.top as TopLevelItem | undefined;
       if (top && TOP_LEVEL_ITEMS.includes(top)) this.patchStatus({ menuTop: top });
     } else if (event.type === "itemSelected" && event.item) {
-      const { kind, id } = event.item;
-      if (kind === "template") this.patchStatus({ template: id });
-      else if (kind === "effect") this.patchStatus({ effect: id });
-      else if (kind === "motion") this.patchStatus({ motion: id });
+      // One category at a time: the patch resets the other two (selectionPatch
+      // is the single source of that rule).
+      this.patchStatus(selectionPatch(event.item.kind, event.item.id));
     }
   }
 
@@ -511,7 +511,9 @@ export class HandFrameEngine {
     // edge state stay fresh.
     const pinchDouble = this.pinchCycle.update(rawHandLandmarks, timestamp);
     if (pinchDouble && gestureAllowed(this.mode, "pinch")) {
-      this.patchStatus({ effect: nextEffect(this.status.effect) });
+      // The cycle goes through selectionPatch too: an effect arriving by
+      // gesture clears the motion/template just like a menu pick does.
+      this.patchStatus(selectionPatch("effect", nextEffect(this.status.effect)));
     }
 
     // -------------------------------------------------------------- pointer

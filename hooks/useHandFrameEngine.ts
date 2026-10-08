@@ -11,6 +11,7 @@ const DEFAULT_STATUS: AppStatus = {
   models: "loading",
   mode: INITIAL_MODE,
   menuTop: null,
+  selectionMode: "template",
   template: DEFAULT_SELECTION.template,
   effect: DEFAULT_SELECTION.effect,
   motion: DEFAULT_SELECTION.motion,

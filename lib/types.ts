@@ -88,6 +88,12 @@ export type AppStatus = {
    */
   menuTop: import("./menuModel").TopLevelItem | null;
   /**
+   * Which category holds THE selection (user rule: template, effect and
+   * motion are mutually exclusive — only one is live at a time). The other
+   * two sit at their defaults; `selectionPatch` is the single source.
+   */
+  selectionMode: import("./modes").MenuPick["kind"];
+  /**
    * Active menu selections — seeded from `DEFAULT_SELECTION` and only
    * changed by `itemSelected` payloads. They are APP state, not frame state:
    * a gesture reset or camera-off keeps them, so the menu always reopens

@@ -17,7 +17,7 @@
  * at. Nothing here knows about pixels of the camera, the DOM, or MediaPipe.
  */
 
-import type { AppMode } from "./modes";
+import type { AppMode, MenuPick } from "./modes";
 
 export const MENU_CONFIG = {
   /**
@@ -153,6 +153,28 @@ export function menuLayout(mode: AppMode, top: TopLevelItem | null): MenuLayout 
     panel: { x, y: L.top, width: L.width, height: lastBottom + L.pad - L.top },
     title: { x: rowsX, y: titleY, width: rowsW, height: L.titleH },
     rows,
+  };
+}
+
+/**
+ * The three categories are mutually exclusive (user rule: template, effect
+ * and motion never run together — picking one is THE selection). A pick in
+ * one category sets its value and pushes the other two back to their
+ * defaults; the patch also carries the active category so the panel can show
+ * the one live mode. One function, so the engine's menu path and its
+ * double-pinch path can't disagree about what "one at a time" means.
+ */
+export function selectionPatch(kind: MenuPick["kind"], id: string): {
+  selectionMode: MenuPick["kind"];
+  template: string;
+  effect: string;
+  motion: string;
+} {
+  return {
+    selectionMode: kind,
+    template: kind === "template" ? id : DEFAULT_SELECTION.template,
+    effect: kind === "effect" ? id : DEFAULT_SELECTION.effect,
+    motion: kind === "motion" ? id : DEFAULT_SELECTION.motion,
   };
 }
 
