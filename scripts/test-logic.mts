@@ -151,6 +151,24 @@ function frameHands(topLeft, bottomRight) {
   return [toNorm(a), toNorm(b)];
 }
 
+/**
+ * Index+middle extended, ring+pinky folded toward the wrist: the 2-finger
+ * swipe sign. Tips stay where the caller asks; the other fingers keep the
+ * `hand()` defaults except for the two folded tips. Pixel coordinates, like
+ * `hand()`.
+ */
+function peace(thumbTip, indexTip, palm = 60) {
+  const p = hand(thumbTip, indexTip, palm);
+  const towardWrist = (pip) => ({
+    x: p[0].x + (pip.x - p[0].x) * 0.9,
+    y: p[0].y + (pip.y - p[0].y) * 0.9,
+    z: 0,
+  });
+  p[16] = towardWrist(p[14]); // ring tip sits nearer the wrist than its PIP
+  p[20] = towardWrist(p[18]); // pinky likewise
+  return p;
+}
+
 let failures = 0;
 function check(name, cond, extra = "") {
   if (cond) {
@@ -1360,22 +1378,101 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
   }
   check("resumes as FRAME_LOCKED without a fresh L", g === "FRAME_LOCKED", g);
   check("the lock itself was never broken", selection.phase === "locked", selection.phase);
+
+  // ---- Slice G: the gesture that OPENS the menu must not destroy it first.
+  // The flick is made BY the right hand — half of the window's anchors. The
+  // engine guards it by freezing the tracker feed and the selection machine
+  // while the swipe sign is held: the sign is the user talking to the app,
+  // not tracking loss (decision 1). stepG mirrors lib/engine.ts tick with
+  // that guard in place.
+  const sw = new SwipeTracker();
+  const stepG = (modeNow, landmarks, nowMs) => {
+    const pixel = landmarks.map((lm) => lm.map((p) => ({ x: p.x * W, y: p.y * H })));
+    const labels = landmarks.map((_, i) => [{ categoryName: i === 1 ? "Right" : "Left" }]);
+    const idx = pickSwipeHand(pixel, labels, SWIPE_CONFIG.hand);
+    sw.update(idx >= 0 ? pixel[idx] : null, nowMs);
+    const wasActive = selectionIsActive(selection.phase);
+    const frameEnabled = handFrameAllowed(modeNow);
+    const feedFrame = frameEnabled && !(modeNow === "FRAME_LOCKED" && sw.gestureHeld);
+    const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(det.corners, W, H);
+    const hasCorners = det.corners.length === 4;
+    const usable = feedFrame && hasCorners && validity.valid;
+    if (feedFrame) {
+      tracker.update(usable ? det.corners : null, 0.016);
+      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      const advance = advanceSelection(selection, {
+        valid: wasActive ? tracker.state !== "lost" : usable,
+        hasCorners,
+      });
+      selection = advance.state;
+      if (advance.deactivated) tracker.reset();
+    }
+    if (selectionIsActive(selection.phase) && modeNow === "FRAME_SEARCH") {
+      modeNow = advanceMode(modeNow, { type: "frameLocked" });
+    } else if (!selectionIsActive(selection.phase) && modeNow === "FRAME_LOCKED") {
+      modeNow = advanceMode(modeNow, { type: "frameReleased" });
+    }
+    return { mode: modeNow, phase: selection.phase, window: tracker.value };
+  };
+
+  const intact = JSON.stringify(r.window);
+  const rightPeace = peace({ x: 940, y: 520 }, { x: 680, y: 520 }, 70);
+  const atDy = (dy) => toNorm(rightPeace.map((p) => ({ x: p.x, y: p.y + dy, z: 0 })));
+
+  // The right hand forms the sign and flicks downward while the left hand
+  // keeps holding its corner of the frame.
+  let gr = { mode: g, phase: selection.phase, window: tracker.value };
+  for (let i = 0; i < 10; i++) {
+    gr = stepG(gr.mode, [good[0], atDy(i * 25)], 7000 + i * 16);
+  }
+  check("guard: the opening flick reads as the swipe sign", sw.gestureHeld === true);
+  check(
+    "TEST 11: the flick does not move the locked window",
+    JSON.stringify(gr.window) === intact,
+    `${intact} vs ${JSON.stringify(gr.window)}`
+  );
+  check(
+    "TEST 11: the lock survives the opening flick",
+    gr.mode === "FRAME_LOCKED" && selectionIsActive(selection.phase),
+    `${gr.mode}/${selection.phase}`
+  );
+
+  // The sign held in a pose that makes the frame's quad unusable must not
+  // run the miss counter: without the guard this releases at frame 9.
+  for (let i = 0; i < 12; i++) {
+    gr = stepG(gr.mode, [good[0], atDy(-300)], 7200 + i * 16);
+  }
+  check("guard: the crushed sign still reads as the sign", sw.gestureHeld === true);
+  check(
+    "TEST 11: a degenerate sign never runs the miss counter",
+    selectionIsActive(selection.phase),
+    selection.phase
+  );
+  check("mode holds at FRAME_LOCKED through the sign", gr.mode === "FRAME_LOCKED", gr.mode);
+  check(
+    "window untouched through the degenerate hold",
+    JSON.stringify(gr.window) === intact,
+    JSON.stringify(gr.window)
+  );
+  check(
+    "TEST 11: the menu opens over the same intact window",
+    advanceMode(gr.mode, { type: "openMenu" }) === "MENU_OPEN" &&
+      JSON.stringify(tracker.value) === intact,
+    JSON.stringify(tracker.value)
+  );
+
+  // Drop the sign: the guard lifts and live tracking resumes normally.
+  gr = stepG("FRAME_SEARCH", [good[0], good[1]], 7400);
+  check(
+    "the guard lifts as soon as the sign is released",
+    sw.gestureHeld === false && gr.mode === "FRAME_LOCKED" && tracker.missedFrames === 0,
+    `${gr.mode}/missed=${tracker.missedFrames}`
+  );
 }
 
 console.log("\n[31] swipe detector — 2-finger flicks, dominant axis, mirror-aware (TEST 3)");
 {
-  /** Index+middle extended, ring+pinky folded: the 2-finger swipe sign. */
-  const peace = (thumbTip, indexTip, palm = 60) => {
-    const p = hand(thumbTip, indexTip, palm);
-    const towardWrist = (pip) => ({
-      x: p[0].x + (pip.x - p[0].x) * 0.9,
-      y: p[0].y + (pip.y - p[0].y) * 0.9,
-      z: 0,
-    });
-    p[16] = towardWrist(p[14]); // ring tip sits nearer the wrist than its PIP
-    p[20] = towardWrist(p[18]); // pinky likewise
-    return p;
-  };
   const at = (base, dx, dy) => base.map((p) => ({ x: p.x + dx, y: p.y + dy, z: 0 }));
   /** Runs a translated-by-(vx,vy)-per-frame motion until an event fires. */
   const swipe = (tracker, base, vx, vy, frames, startMs = 1000) => {

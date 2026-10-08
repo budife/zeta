@@ -129,6 +129,16 @@ export class SwipeTracker {
     this.lastEvent = null;
   }
 
+  /**
+   * True while the last evaluated hand held the swipe sign. The engine
+   * freezes the frame's tracker feed on this (decision 1 / Slice G): the
+   * sign is the user talking to the app, not tracking loss — even when the
+   * gesture degrades the frame's own anchors on its way to firing.
+   */
+  get gestureHeld(): boolean {
+    return this.signOk;
+  }
+
   /** Debug readout for the overlay — see {@link SwipeDebug}. */
   debugState(nowMs: number, handIndex: number): SwipeDebug {
     let travelPx = 0;
@@ -148,14 +158,17 @@ export class SwipeTracker {
   }
 
   update(hand: Point[] | null, nowMs: number): SwipeEvent | null {
+    // The sign is evaluated even inside the cooldown: the quiet period gates
+    // FIRING, not reading — gestureHeld must say what the hand is doing now,
+    // not what it was doing when the last event fired.
+    const point = this.signPoint(hand);
+    this.signOk = point !== null;
     if (nowMs < this.cooldownUntil) {
       // Inside the quiet period a flick must not half-accumulate and then
       // complete early; it starts fresh once the cooldown lifts.
       this.samples = [];
       return null;
     }
-    const point = this.signPoint(hand);
-    this.signOk = point !== null;
     if (!point) {
       this.samples = []; // hand gone, or not making the 2-finger sign
       return null;

@@ -424,14 +424,14 @@ export class HandFrameEngine {
 
     // --------------------------------------------------------------- swipe
     // The detector runs every frame (its window/cooldown state must stay
-    // fresh). The hand is picked by pickSwipeHand(): label "Right" first,
+    // fresh) and picks its hand via pickSwipeHand(): label "Right" first,
     // image-left fallback — MediaPipe's handedness assumes a mirrored input
     // while we feed it the raw frame, so labels can come back reversed and
-    // must not be the only gate. The event is consumed only where it cannot
-    // damage a frame: opening the menu FROM FRAME_LOCKED needs the
-    // geometry-preservation guard first (Slice G, TEST 11). swipeLeft is
-    // detected but not consumed yet — the reset path needs its RESETTING
-    // side effects first (Slice H).
+    // must not be the only gate. Where swipeDown is allowed the event is
+    // consumed: IDLE, FRAME_SEARCH, and — with the geometry-preservation
+    // guard in the frame feed below — FRAME_LOCKED too (TEST 11: the menu
+    // opens over the SAME window). swipeLeft is detected but not consumed
+    // yet: the reset path needs its RESETTING side effects first (Slice H).
     const swipeHandIndex = pickSwipeHand(
       pixelHands,
       handResult.handednesses ?? null,
@@ -441,11 +441,7 @@ export class HandFrameEngine {
       swipeHandIndex >= 0 ? pixelHands[swipeHandIndex] : null,
       timestamp
     );
-    if (
-      swipe === "swipeDown" &&
-      gestureAllowed(this.mode, "swipeDown") &&
-      this.mode !== "FRAME_LOCKED"
-    ) {
+    if (swipe === "swipeDown" && gestureAllowed(this.mode, "swipeDown")) {
       this.handleModeEvent({ type: "openMenu" });
     }
 
@@ -475,6 +471,19 @@ export class HandFrameEngine {
     // menu can neither fabricate nor destroy a locked window.
     const frameEnabled = handFrameAllowed(this.mode);
 
+    // Slice G — geometry-preservation guard (decision 1 / TEST 11): while
+    // the swipe sign is held IN FRAME_LOCKED, the gesture itself degrades the
+    // frame's right-hand anchors — the quad deforms toward the flicking hand,
+    // goes degenerate, or outruns MediaPipe — and that is the user SPEAKING
+    // to the app, not tracking loss. Freezing the tracker feed and the
+    // selection machine on the sign is what lets swipeDown open the menu over
+    // the SAME window. The pinch guard (decision 1, same rule: degenerate
+    // gesture geometry is not tracking loss) rides this same switch once
+    // pinch detection lands with the effects slice.
+    const gestureFrozen =
+      this.mode === "FRAME_LOCKED" && this.swipeTracker.gestureHeld;
+    const feedFrame = frameEnabled && !gestureFrozen;
+
     const detection: HandFrameDetection = detectHandFrame(
       handResult.landmarks,
       width,
@@ -484,13 +493,13 @@ export class HandFrameEngine {
     const rawFrame = calculateFrame(detection.corners);
     const validity = isValidQuad(detection.corners, width, height);
     const hasCorners = detection.corners.length === 4;
-    const usable = frameEnabled && hasCorners && validity.valid;
+    const usable = feedFrame && hasCorners && validity.valid;
 
     // The tracker is fed BEFORE the selection machine reads its state, so the
     // state describes this frame. Only usable corners are fed; a frame where
     // the hands are present but the shape is degenerate counts as a miss, and
     // the window holds its last good shape instead of collapsing.
-    if (frameEnabled) {
+    if (feedFrame) {
       this.tracker.update(usable ? detection.corners : null, dt);
       // While still FORMING the window is not yet a selection, so stale dots
       // are cleared shortly after the hands leave. A live selection holds for
@@ -506,8 +515,9 @@ export class HandFrameEngine {
     // tracker has given up — i.e. the hands were genuinely gone for
     // maxMissedFrames. A tilted, trapezoid, or momentarily misread frame never
     // counts toward release on its own. While acquiring, the strict quad check
-    // still gates the initial lock.
-    if (frameEnabled) {
+    // still gates the initial lock. (Both blocks share `feedFrame`: the
+    // gesture guard freezes the whole selection advance, tracker included.)
+    if (feedFrame) {
       const advance = advanceSelection(this.selection, {
         valid: wasActive ? this.tracker.state !== "lost" : usable,
         hasCorners,
