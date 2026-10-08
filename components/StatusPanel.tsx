@@ -53,6 +53,10 @@ const REGION_LABELS: Partial<Record<RegionKind, string>> = {
 export function StatusPanel({ status }: StatusPanelProps) {
   const rows: Array<{ label: string; value: string; tone?: "ok" | "warn" }> = [
     { label: "Camera", value: CAMERA_TEXT[status.camera], tone: status.camera === "ready" ? "ok" : undefined },
+    // The mode machine's live mode — the frame only forms in FRAME_SEARCH /
+    // FRAME_LOCKED, so this row is the first thing to check when a gesture
+    // "does nothing" (TEST 1: IDLE, L does nothing).
+    { label: "Mode", value: status.mode },
     { label: "Hands", value: handText(status.hands), tone: status.hands === 2 ? "ok" : undefined },
     { label: "Frame", value: status.frame === "active" ? "Active" : "Not Active", tone: status.frame === "active" ? "ok" : undefined },
     { label: "Face", value: faceText(status.face), tone: status.face === "in-frame" ? "ok" : undefined },

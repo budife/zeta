@@ -34,6 +34,12 @@ import {
   INITIAL_SELECTION,
   SELECTION_CONFIG,
 } from "../lib/selection";
+import {
+  advanceMode,
+  gestureAllowed,
+  handFrameAllowed,
+  INITIAL_MODE,
+} from "../lib/modes";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
 import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
@@ -1199,6 +1205,159 @@ console.log("\n[27] pose skeleton topology — all 33 joints connected");
     required.every((i) => seen.has(i)),
     `missing: ${required.filter((i) => !seen.has(i)).join(",")}`
   );
+}
+
+console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)");
+{
+  // ---- the mode chain itself (spec: IDLE -> MENU_OPEN -> MENU_SELECT ->
+  // FRAME_SEARCH -> FRAME_LOCKED -> RESETTING -> IDLE) ----
+  let m = INITIAL_MODE;
+  check("starts in IDLE", m === "IDLE", m);
+  m = advanceMode(m, { type: "openMenu" });
+  check("swipe-down from IDLE opens the menu", m === "MENU_OPEN", m);
+  m = advanceMode(m, { type: "openSubmenu" });
+  check("picking a top-level entry opens its submenu", m === "MENU_SELECT", m);
+  m = advanceMode(m, { type: "openSubmenu" });
+  check("switching submenus stays in MENU_SELECT", m === "MENU_SELECT", m);
+  m = advanceMode(m, { type: "itemSelected" });
+  check("selecting an item enables frame search", m === "FRAME_SEARCH", m);
+
+  // Illegal events are no-ops: the chain cannot be shortcut.
+  check("no lock without a menu selection", advanceMode("IDLE", { type: "frameLocked" }) === "IDLE");
+  check("no skipping the menu", advanceMode("IDLE", { type: "itemSelected" }) === "IDLE");
+  check(
+    "release outside FRAME_LOCKED is a no-op",
+    advanceMode("FRAME_SEARCH", { type: "frameReleased" }) === "FRAME_SEARCH"
+  );
+
+  // The lock/release loop.
+  check("search locks into FRAME_LOCKED", advanceMode("FRAME_SEARCH", { type: "frameLocked" }) === "FRAME_LOCKED");
+  check("lock reopens the menu", advanceMode("FRAME_LOCKED", { type: "openMenu" }) === "MENU_OPEN");
+  check(
+    "release returns to frame search",
+    advanceMode("FRAME_LOCKED", { type: "frameReleased" }) === "FRAME_SEARCH"
+  );
+  check("reset enters RESETTING", advanceMode("FRAME_LOCKED", { type: "reset" }) === "RESETTING");
+  check("reset settles in IDLE", advanceMode("RESETTING", { type: "resetDone" }) === "IDLE");
+
+  // ---- the exclusive gesture matrix (one gesture, one mode family) ----
+  const ALL_MODES = ["IDLE", "MENU_OPEN", "MENU_SELECT", "FRAME_SEARCH", "FRAME_LOCKED", "RESETTING"];
+  const FRAME_MODES = ["FRAME_SEARCH", "FRAME_LOCKED"];
+  for (const modeName of ALL_MODES) {
+    const expect = FRAME_MODES.includes(modeName);
+    check(
+      `handFrame ${expect ? "allowed" : "blocked"} in ${modeName}`,
+      gestureAllowed(modeName, "handFrame") === expect
+    );
+  }
+  check(
+    "pointer only in the menu modes",
+    gestureAllowed("MENU_OPEN", "pointer") &&
+      gestureAllowed("MENU_SELECT", "pointer") &&
+      !gestureAllowed("IDLE", "pointer") &&
+      !gestureAllowed("FRAME_LOCKED", "pointer")
+  );
+  check(
+    "pinch only while FRAME_LOCKED",
+    gestureAllowed("FRAME_LOCKED", "pinch") &&
+      ALL_MODES.filter((x) => x !== "FRAME_LOCKED").every((x) => !gestureAllowed(x, "pinch"))
+  );
+  check(
+    "swipe-left (reset) only while FRAME_LOCKED",
+    gestureAllowed("FRAME_LOCKED", "swipeLeft") &&
+      ALL_MODES.filter((x) => x !== "FRAME_LOCKED").every((x) => !gestureAllowed(x, "swipeLeft"))
+  );
+  check(
+    "swipe-down opens the menu from IDLE, FRAME_SEARCH and FRAME_LOCKED",
+    gestureAllowed("IDLE", "swipeDown") &&
+      gestureAllowed("FRAME_SEARCH", "swipeDown") &&
+      gestureAllowed("FRAME_LOCKED", "swipeDown") &&
+      !gestureAllowed("MENU_OPEN", "swipeDown") &&
+      !gestureAllowed("RESETTING", "swipeDown")
+  );
+  const ALL_GESTURES = ["handFrame", "pointer", "pinch", "swipeDown", "swipeLeft"];
+  check(
+    "RESETTING allows no gesture at all",
+    ALL_GESTURES.every((gesture) => !gestureAllowed("RESETTING", gesture))
+  );
+
+  // ---- engine gate replication (lib/engine.ts tick) ----
+  // Frame formation runs only where handFrameAllowed() says so; everywhere
+  // else the selection machine and the tracker are frozen where they are, so
+  // a menu can neither fabricate nor destroy a locked window.
+  const tracker = new StickyFrameTracker();
+  let selection = INITIAL_SELECTION;
+  const step = (modeNow, landmarks) => {
+    const wasActive = selectionIsActive(selection.phase);
+    const frameEnabled = handFrameAllowed(modeNow);
+    const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(det.corners, W, H);
+    const hasCorners = det.corners.length === 4;
+    const usable = frameEnabled && hasCorners && validity.valid;
+    if (frameEnabled) {
+      tracker.update(usable ? det.corners : null, 0.016);
+      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      const advance = advanceSelection(selection, {
+        valid: wasActive ? tracker.state !== "lost" : usable,
+        hasCorners,
+      });
+      selection = advance.state;
+      if (advance.deactivated) tracker.reset();
+    }
+    // The engine syncs the mode from the selection machine's live state.
+    if (selectionIsActive(selection.phase) && modeNow === "FRAME_SEARCH") {
+      modeNow = advanceMode(modeNow, { type: "frameLocked" });
+    } else if (!selectionIsActive(selection.phase) && modeNow === "FRAME_LOCKED") {
+      modeNow = advanceMode(modeNow, { type: "frameReleased" });
+    }
+    return { mode: modeNow, phase: selection.phase, window: tracker.value };
+  };
+
+  const good = frameHands({ x: 340, y: 200 }, { x: 940, y: 520 });
+
+  // TEST 1: in IDLE a perfect two-hand L must not produce anything.
+  let g = INITIAL_MODE;
+  for (let i = 0; i < 10; i++) g = step(g, good).mode;
+  check("TEST 1: L in IDLE leaves the selection searching", selection.phase === "searching", selection.phase);
+  check("TEST 1: no window in IDLE", tracker.value === null, JSON.stringify(tracker.value));
+  check("TEST 1: mode stays IDLE", g === "IDLE", g);
+
+  // The menu modes belong to the pointer, not to the frame.
+  g = advanceMode(g, { type: "openMenu" });
+  for (let i = 0; i < 10; i++) g = step(g, good).mode;
+  check("L in MENU_OPEN never locks", selection.phase === "searching", selection.phase);
+  check("mode stays MENU_OPEN", g === "MENU_OPEN", g);
+
+  // TEST 2: after an item is selected, the very same gesture locks.
+  g = advanceMode(g, { type: "openSubmenu" });
+  g = advanceMode(g, { type: "itemSelected" });
+  check("selection moves to FRAME_SEARCH", g === "FRAME_SEARCH", g);
+  let r = { mode: g, phase: selection.phase, window: tracker.value };
+  for (let i = 0; i < 3; i++) {
+    r = step(g, good);
+    g = r.mode;
+  }
+  check("TEST 2: the same L now locks", selectionIsActive(selection.phase), selection.phase);
+  check("mode advanced to FRAME_LOCKED", g === "FRAME_LOCKED", g);
+  check("window published", r.window.length === 4, JSON.stringify(r.window));
+
+  // TEST 11 core: the menu may open over a locked frame without destroying it.
+  g = advanceMode(g, { type: "openMenu" });
+  check("lock reopens the menu", g === "MENU_OPEN", g);
+  for (let i = 0; i < 20; i++) {
+    r = step(g, []);
+    g = r.mode;
+  }
+  check("menu never releases a locked frame", selectionIsActive(selection.phase), selection.phase);
+  check("window geometry survives the menu", r.window.length === 4, JSON.stringify(r.window));
+  g = advanceMode(g, { type: "openSubmenu" });
+  g = advanceMode(g, { type: "itemSelected" });
+  for (let i = 0; i < 3; i++) {
+    r = step(g, good);
+    g = r.mode;
+  }
+  check("resumes as FRAME_LOCKED without a fresh L", g === "FRAME_LOCKED", g);
+  check("the lock itself was never broken", selection.phase === "locked", selection.phase);
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

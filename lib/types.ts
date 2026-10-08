@@ -9,6 +9,7 @@
 
 import type { RegionKind } from "./regions";
 import type { SelectionPhase } from "./selection";
+import type { AppMode } from "./modes";
 
 /** A point in video-pixel space. */
 export type Point = { x: number; y: number };
@@ -72,6 +73,14 @@ export type FaceState = "none" | "outside" | "in-frame";
 export type AppStatus = {
   camera: "off" | "starting" | "ready" | "error";
   models: "loading" | "ready" | "error";
+  /**
+   * The application mode machine's current mode (lib/modes.ts). Discrete, so
+   * it lives here and not in the per-frame `Snapshot`: frame formation only
+   * runs in FRAME_SEARCH / FRAME_LOCKED, and every mode change is a UI-level
+   * event (menu open, item selected, lock, release, reset), not a per-frame
+   * value.
+   */
+  mode: AppMode;
   hands: number;
   frame: "inactive" | "active";
   face: FaceState;

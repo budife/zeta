@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HandFrameEngine } from "@/lib/engine";
+import { INITIAL_MODE } from "@/lib/modes";
 import type { AppStatus, Snapshot } from "@/lib/types";
 
 const DEFAULT_STATUS: AppStatus = {
   camera: "off",
   models: "loading",
+  mode: INITIAL_MODE,
   hands: 0,
   frame: "inactive",
   face: "none",

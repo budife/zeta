@@ -19,6 +19,7 @@ import {
   type SelectionState,
 } from "./selection";
 import { calculateFrame, detectHandFrame, isValidQuad } from "./handFrame";
+import { advanceMode, handFrameAllowed, INITIAL_MODE, type AppMode, type ModeEvent } from "./modes";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -116,6 +117,16 @@ export class HandFrameEngine {
 
   private selection: SelectionState = INITIAL_SELECTION;
 
+  /**
+   * The application mode (lib/modes.ts). Frame formation — the tracker feed
+   * AND the selection machine — only runs in FRAME_SEARCH / FRAME_LOCKED; in
+   * every other mode both are frozen exactly where they are, so a perfect L
+   * in IDLE produces nothing (TEST 1) and an open menu can neither fabricate
+   * nor destroy a locked window (its geometry survives until the user picks
+   * an item). Changed only through `dispatchMode`, so status stays in sync.
+   */
+  private mode: AppMode = INITIAL_MODE;
+
   private faceState: FaceState = "none";
   private lastFaceBox: Box | null = null;
   private lastFaceAt = 0;
@@ -138,6 +149,7 @@ export class HandFrameEngine {
   private status: AppStatus = {
     camera: "off",
     models: "loading",
+    mode: INITIAL_MODE,
     hands: 0,
     frame: "inactive",
     face: "none",
@@ -169,6 +181,7 @@ export class HandFrameEngine {
     const changed =
       next.camera !== this.status.camera ||
       next.models !== this.status.models ||
+      next.mode !== this.status.mode ||
       next.hands !== this.status.hands ||
       next.frame !== this.status.frame ||
       next.face !== this.status.face ||
@@ -179,6 +192,23 @@ export class HandFrameEngine {
     if (changed) {
       for (const listener of this.statusListeners) listener(next);
     }
+  }
+
+  // -------------------------------------------------------------------- mode
+
+  /**
+   * Feeds an event to the mode machine (lib/modes.ts). Called by the swipe
+   * detector, the menu UI, and the selection-machine sync inside `tick`.
+   * Illegal events are no-ops, so callers never need the transition graph.
+   */
+  handleModeEvent(event: ModeEvent): void {
+    this.applyMode(advanceMode(this.mode, event));
+  }
+
+  private applyMode(next: AppMode): void {
+    if (next === this.mode) return;
+    this.mode = next;
+    this.patchStatus({ mode: next });
   }
 
   // ------------------------------------------------------------------- models
@@ -307,8 +337,10 @@ export class HandFrameEngine {
     this.faceState = "none";
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.tracker.reset();
+    this.mode = INITIAL_MODE;
     this.patchStatus({
       camera: "off",
+      mode: INITIAL_MODE,
       hands: 0,
       frame: "inactive",
       face: "none",
@@ -374,6 +406,15 @@ export class HandFrameEngine {
     // is never re-validated after lock, only the anchors need to stay readable.
     const wasActive = selectionIsActive(this.selection.phase);
     const handResult = this.handLandmarker.detectForVideo(video, timestamp);
+
+    // MODE GATE (spec AK / TEST 1): frame formation runs only in FRAME_SEARCH
+    // and FRAME_LOCKED. Landmarks are still detected everywhere (the debug
+    // overlay and, later, the menu pointer read them), but outside the frame
+    // modes the tracker feed and the selection machine below are skipped
+    // entirely — frozen where they are, so IDLE produces nothing and an open
+    // menu can neither fabricate nor destroy a locked window.
+    const frameEnabled = handFrameAllowed(this.mode);
+
     const detection: HandFrameDetection = detectHandFrame(
       handResult.landmarks,
       width,
@@ -383,18 +424,21 @@ export class HandFrameEngine {
     const rawFrame = calculateFrame(detection.corners);
     const validity = isValidQuad(detection.corners, width, height);
     const hasCorners = detection.corners.length === 4;
-    const usable = hasCorners && validity.valid;
+    const usable = frameEnabled && hasCorners && validity.valid;
 
     // The tracker is fed BEFORE the selection machine reads its state, so the
     // state describes this frame. Only usable corners are fed; a frame where
     // the hands are present but the shape is degenerate counts as a miss, and
     // the window holds its last good shape instead of collapsing.
-    this.tracker.update(usable ? detection.corners : null, dt);
-    // While still FORMING the window is not yet a selection, so stale dots are
-    // cleared shortly after the hands leave. A live selection holds for the
-    // full grace budget — the machine, not the tracker, decides when it ends.
-    if (!wasActive && this.tracker.missedFrames > FORMING_HOLD_FRAMES) {
-      this.tracker.reset();
+    if (frameEnabled) {
+      this.tracker.update(usable ? detection.corners : null, dt);
+      // While still FORMING the window is not yet a selection, so stale dots
+      // are cleared shortly after the hands leave. A live selection holds for
+      // the full grace budget — the machine, not the tracker, decides when it
+      // ends.
+      if (!wasActive && this.tracker.missedFrames > FORMING_HOLD_FRAMES) {
+        this.tracker.reset();
+      }
     }
     const windowCorners = this.tracker.value ?? [];
 
@@ -403,18 +447,30 @@ export class HandFrameEngine {
     // maxMissedFrames. A tilted, trapezoid, or momentarily misread frame never
     // counts toward release on its own. While acquiring, the strict quad check
     // still gates the initial lock.
-    const advance = advanceSelection(this.selection, {
-      valid: wasActive ? this.tracker.state !== "lost" : usable,
-      hasCorners,
-    });
-    this.selection = advance.state;
+    if (frameEnabled) {
+      const advance = advanceSelection(this.selection, {
+        valid: wasActive ? this.tracker.state !== "lost" : usable,
+        hasCorners,
+      });
+      this.selection = advance.state;
+
+      if (advance.deactivated) {
+        this.tracker.reset();
+        this.lastFaceBox = null;
+        this.faceState = "none";
+        this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
+      }
+    }
     const active = selectionIsActive(this.selection.phase);
 
-    if (advance.deactivated) {
-      this.tracker.reset();
-      this.lastFaceBox = null;
-      this.faceState = "none";
-      this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
+    // MODE SYNC: the selection machine drives FRAME_SEARCH <-> FRAME_LOCKED.
+    // State-based rather than edge-based, so a window frozen while the menu
+    // was open rejoins FRAME_LOCKED on its first tracked frame again (TEST 11)
+    // without needing a fresh lock event.
+    if (active && this.mode === "FRAME_SEARCH") {
+      this.applyMode(advanceMode(this.mode, { type: "frameLocked" }));
+    } else if (!active && this.mode === "FRAME_LOCKED") {
+      this.applyMode(advanceMode(this.mode, { type: "frameReleased" }));
     }
 
     // The fitted rect is derived from the same corners the clip uses — one
@@ -545,6 +601,7 @@ export class HandFrameEngine {
     // Diagnostic hook for manual inspection / automated checks.
     if (typeof window !== "undefined") {
       (window as unknown as { __handFrameDebug?: unknown }).__handFrameDebug = {
+        mode: this.mode,
         handLandmarkCount: rawHandLandmarks.length,
         rawHandLandmarks,
         faceLandmarkCount: faceLandmarksThisFrame.length,
