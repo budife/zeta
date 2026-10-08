@@ -124,6 +124,29 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
             <dd>{stats ? stats.hands.length : "—"}</dd>
           </div>
           <div>
+            <dt>Handedness</dt>
+            <dd>{stats && stats.handedness.length ? stats.handedness.join(" ") : "—"}</dd>
+          </div>
+          <div>
+            <dt>Swipe</dt>
+            <dd>
+              {stats
+                ? `#${stats.swipe.handIndex} ${stats.swipe.signOk ? "sign ✓" : "sign ✗"} ` +
+                  `${stats.swipe.travelPx}px` +
+                  (stats.swipe.cooldownLeftMs > 0 ? ` cd ${stats.swipe.cooldownLeftMs}` : "") +
+                  (stats.swipe.lastEvent ? ` → ${stats.swipe.lastEvent}` : "")
+                : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt>Pointer</dt>
+            <dd>
+              {stats && stats.pointer
+                ? `${Math.round(stats.pointer.x)},${Math.round(stats.pointer.y)}`
+                : "—"}
+            </dd>
+          </div>
+          <div>
             <dt>Corners</dt>
             <dd>{stats ? stats.corners.length : "—"}</dd>
           </div>

@@ -40,7 +40,7 @@ import {
   handFrameAllowed,
   INITIAL_MODE,
 } from "../lib/modes";
-import { SwipeTracker, SWIPE_CONFIG } from "../lib/swipe";
+import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand, type SwipeDebug } from "../lib/swipe";
 import { HoverTracker, MENU_CONFIG, TOP_LEVEL_ITEMS } from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
@@ -1459,6 +1459,51 @@ console.log("\n[31] swipe detector — 2-finger flicks, dominant axis, mirror-aw
   );
 
   check("config is tunable", SWIPE_CONFIG.minDistancePx > 0 && SWIPE_CONFIG.cooldownMs > 0);
+
+  // ---- hand pick: must survive MediaPipe's mirrored handedness assumption.
+  // Index 0's wrist sits on the image-LEFT (the person's right side of an
+  // unmirrored frontal camera); index 1's on the image-right.
+  const pickHands = [[{ x: 300, y: 0 }], [{ x: 900, y: 0 }]];
+  check(
+    "a hand labeled Right wins over position",
+    pickSwipeHand(pickHands, [[{ categoryName: "Left" }], [{ categoryName: "Right" }]], "Right") === 1
+  );
+  check(
+    "labels flipped (no Right anywhere) → image-left hand, i.e. the person's right",
+    pickSwipeHand(pickHands, [[{ categoryName: "Left" }], [{ categoryName: "Left" }]], "Right") === 0
+  );
+  check(
+    "no handedness data at all → image-left hand",
+    pickSwipeHand(pickHands, null, "Right") === 0
+  );
+  check("no hands → no pick", pickSwipeHand([], null, "Right") === -1);
+
+  // ---- debug readout for the overlay (evidence while hunting webcam bugs)
+  const dbg = new SwipeTracker();
+  dbg.update(sign, 0);
+  check("debug: peace sign reports signOk", dbg.debugState(0, 0).signOk === true);
+  dbg.update(openPalm, 16);
+  check("debug: open palm reports signOk false", dbg.debugState(16, 0).signOk === false);
+
+  const mid = new SwipeTracker();
+  for (let i = 0; i < 6; i++) mid.update(at(sign, 0, 12 * i), 1000 + i * 16);
+  const midState: SwipeDebug = mid.debugState(1080, 1);
+  check(
+    "debug: travel is visible mid-flick, below the threshold",
+    midState.travelPx > 0 && midState.travelPx < SWIPE_CONFIG.minDistancePx,
+    JSON.stringify(midState)
+  );
+
+  const done = new SwipeTracker();
+  const firedEvent = swipe(done, sign, 0, 12, 40, 5000);
+  const afterState = done.debugState(5160, 2);
+  check(
+    "debug: the last event is recorded",
+    firedEvent === "swipeDown" && afterState.lastEvent === "swipeDown",
+    JSON.stringify(afterState)
+  );
+  check("debug: cooldown counts down", afterState.cooldownLeftMs > 0, JSON.stringify(afterState));
+  check("debug: the picked hand index passes through", afterState.handIndex === 2, String(afterState.handIndex));
 }
 
 console.log("\n[32] menu dwell — hover highlights, hold 400ms selects (TEST 4 / 5)");

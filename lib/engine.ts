@@ -27,7 +27,7 @@ import {
   type AppMode,
   type ModeEvent,
 } from "./modes";
-import { SwipeTracker, SWIPE_CONFIG } from "./swipe";
+import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
@@ -424,25 +424,21 @@ export class HandFrameEngine {
 
     // --------------------------------------------------------------- swipe
     // The detector runs every frame (its window/cooldown state must stay
-    // fresh) on the right hand only, picked by MediaPipe's handedness. The
-    // event is then consumed only where it cannot damage a frame: opening
-    // the menu FROM FRAME_LOCKED needs the geometry-preservation guard first
-    // (the peace sign collapses the right hand's frame anchors, so firing
-    // now would release the lock before the event lands — Slice G wires that
-    // leg together with TEST 11). swipeLeft is detected but not consumed
-    // yet: the reset path needs its RESETTING side effects first (Slice H).
-    let rightIndex = -1;
-    const handednesses = handResult.handednesses;
-    if (handednesses) {
-      for (let i = 0; i < handednesses.length; i++) {
-        if (handednesses[i]?.[0]?.categoryName === SWIPE_CONFIG.hand) {
-          rightIndex = i;
-          break;
-        }
-      }
-    }
+    // fresh). The hand is picked by pickSwipeHand(): label "Right" first,
+    // image-left fallback — MediaPipe's handedness assumes a mirrored input
+    // while we feed it the raw frame, so labels can come back reversed and
+    // must not be the only gate. The event is consumed only where it cannot
+    // damage a frame: opening the menu FROM FRAME_LOCKED needs the
+    // geometry-preservation guard first (Slice G, TEST 11). swipeLeft is
+    // detected but not consumed yet — the reset path needs its RESETTING
+    // side effects first (Slice H).
+    const swipeHandIndex = pickSwipeHand(
+      pixelHands,
+      handResult.handednesses ?? null,
+      SWIPE_CONFIG.hand
+    );
     const swipe = this.swipeTracker.update(
-      rightIndex >= 0 ? pixelHands[rightIndex] : null,
+      swipeHandIndex >= 0 ? pixelHands[swipeHandIndex] : null,
       timestamp
     );
     if (
@@ -454,15 +450,22 @@ export class HandFrameEngine {
     }
 
     // -------------------------------------------------------------- pointer
-    // Index fingertip of the pointing hand, in raw video pixels: the right
-    // hand when it is visible (spec: right-hand pointer), else any hand —
-    // the menu cursor should never go dead just because the preferred hand
-    // is out of frame. Consumed by the menu layer through the coordinate
-    // chain; publishing it in every mode keeps the debug overlay honest.
-    const pointerHand = rightIndex >= 0 ? rightIndex : pixelHands.length > 0 ? 0 : -1;
+    // Index fingertip of the pointing hand, in raw video pixels: the same
+    // hand pick as the swipe (right-preferred), falling back to any single
+    // visible hand — the menu cursor should never go dead just because the
+    // preferred hand is out of frame. Consumed by the menu layer through the
+    // coordinate chain; published in every mode so the debug overlay is
+    // always honest.
+    const pointerHand = swipeHandIndex;
     const pointerLm =
       pointerHand >= 0 ? rawHandLandmarks[pointerHand][8] : null; // landmark 8 = index tip
     const pointer = pointerLm ? { x: pointerLm.x * width, y: pointerLm.y * height } : null;
+
+    // Handedness labels as reported, for the debug readout — this is the
+    // row that settles whether the camera's labels are trustworthy.
+    const handednessLabels = (handResult.handednesses ?? []).map(
+      (h, i) => `${i}:${h?.[0]?.categoryName ?? "?"} ${(h?.[0]?.score ?? 0).toFixed(2)}`
+    );
 
     // MODE GATE (spec AK / TEST 1): frame formation runs only in FRAME_SEARCH
     // and FRAME_LOCKED. Landmarks are still detected everywhere (the debug
@@ -640,6 +643,8 @@ export class HandFrameEngine {
       faceLandmarks: faceLandmarksThisFrame,
       corners: detection.corners,
       pointer,
+      handedness: handednessLabels,
+      swipe: this.swipeTracker.debugState(timestamp, swipeHandIndex),
       windowCorners,
       frameActive: active,
       selectionPhase: this.selection.phase,

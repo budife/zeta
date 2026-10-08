@@ -125,6 +125,15 @@ export type Snapshot = {
    */
   pointer: Point | null;
   /**
+   * MediaPipe's handedness verdict per detected hand ("0:Right 0.97"),
+   * raw as reported. Debug readout: it settles whether this camera's labels
+   * can be trusted, since MediaPipe decides handedness assuming a mirrored
+   * input while we feed it the raw frame.
+   */
+  handedness: string[];
+  /** Swipe detector live state — debug readout for the gesture hunt. */
+  swipe: import("./swipe").SwipeDebug;
+  /**
    * The four corners of the hand-made window, in video-pixel space — the single
    * source the yellow dots and the clip-path both read, so they can never
    * disagree. Produced by the sticky tracker (`lib/frameTracker.ts`): eased

@@ -53,6 +53,60 @@ export const SWIPE_CONFIG = {
 /** Swipe directions, named as the user sees them on the mirrored preview. */
 export type SwipeEvent = "swipeDown" | "swipeLeft";
 
+/**
+ * Live detector state for the debug overlay — the evidence trail when a
+ * webcam gesture "does nothing": is the sign recognized, how far the flick
+ * has travelled, is the cooldown still running, what was the last event.
+ */
+export type SwipeDebug = {
+  /** Which hand the engine picked for swipes (-1 when no hand is visible). */
+  handIndex: number;
+  /** Whether the last evaluated hand held the 2-finger sign. */
+  signOk: boolean;
+  /** Travel inside the current window (px), before the threshold. */
+  travelPx: number;
+  /** Samples currently inside the window. */
+  samples: number;
+  /** Milliseconds of cooldown still running. */
+  cooldownLeftMs: number;
+  /** The most recent event this tracker fired, if any. */
+  lastEvent: SwipeEvent | null;
+};
+
+/**
+ * Picks the hand swipes (and the menu pointer) are read from.
+ *
+ * MediaPipe decides handedness ASSUMING a mirrored input, while
+ * getUserMedia hands us the raw, unmirrored frame — so on many cameras the
+ * labels come back reversed. The pick therefore has two tiers:
+ *
+ *   1. the hand labeled `wanted` ("Right") wins outright;
+ *   2. otherwise the image-LEFT hand: in an unmirrored frontal frame that is
+ *      the person's right side — the same convention the mirror preview
+ *      shows them.
+ *
+ * With a single visible hand that hand is chosen either way (one-hand
+ * gestures are unambiguous, and the label may simply be the reversed one).
+ * Returns -1 when no hand is visible.
+ */
+export function pickSwipeHand(
+  hands: Point[][],
+  handedness: { categoryName?: string }[][] | null,
+  wanted: string
+): number {
+  if (hands.length === 0) return -1;
+  if (handedness) {
+    for (let i = 0; i < hands.length; i++) {
+      if (handedness[i]?.[0]?.categoryName === wanted) return i;
+    }
+  }
+  let imageLeft = 0;
+  for (let i = 1; i < hands.length; i++) {
+    if ((hands[i][0]?.x ?? Infinity) < (hands[imageLeft][0]?.x ?? Infinity)) imageLeft = i;
+  }
+  return imageLeft;
+}
+
 type Sample = { t: number; x: number; y: number };
 
 /**
@@ -64,11 +118,33 @@ type Sample = { t: number; x: number; y: number };
 export class SwipeTracker {
   private samples: Sample[] = [];
   private cooldownUntil = 0;
+  private signOk = false;
+  private lastEvent: SwipeEvent | null = null;
 
   /** Camera turned off / full reset: forget in-flight movement. */
   reset(): void {
     this.samples = [];
     this.cooldownUntil = 0;
+    this.signOk = false;
+    this.lastEvent = null;
+  }
+
+  /** Debug readout for the overlay — see {@link SwipeDebug}. */
+  debugState(nowMs: number, handIndex: number): SwipeDebug {
+    let travelPx = 0;
+    if (this.samples.length >= 2) {
+      const first = this.samples[0];
+      const last = this.samples[this.samples.length - 1];
+      travelPx = Math.hypot(last.x - first.x, last.y - first.y);
+    }
+    return {
+      handIndex,
+      signOk: this.signOk,
+      travelPx: Math.round(travelPx),
+      samples: this.samples.length,
+      cooldownLeftMs: Math.max(0, Math.round(this.cooldownUntil - nowMs)),
+      lastEvent: this.lastEvent,
+    };
   }
 
   update(hand: Point[] | null, nowMs: number): SwipeEvent | null {
@@ -79,6 +155,7 @@ export class SwipeTracker {
       return null;
     }
     const point = this.signPoint(hand);
+    this.signOk = point !== null;
     if (!point) {
       this.samples = []; // hand gone, or not making the 2-finger sign
       return null;
@@ -111,6 +188,7 @@ export class SwipeTracker {
     }
     this.cooldownUntil = nowMs + SWIPE_CONFIG.cooldownMs;
     this.samples = [];
+    this.lastEvent = event;
     return event;
   }
 
