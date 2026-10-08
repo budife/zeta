@@ -119,6 +119,8 @@ export default function HomePage() {
               subscribe={subscribeSnapshot}
               src={media}
               faceAlignEnabled={media === DEFAULT_MEDIA}
+              effect={status.effect}
+              motion={status.motion}
             />
             <HandFrame subscribe={subscribeSnapshot} active={frameActive} debug={debug} />
             {menuOpen && (

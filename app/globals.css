@@ -329,6 +329,172 @@ button {
   user-select: none;
 }
 
+/*
+ * Effects — a single overlay inside the hand window (after the media, so it
+ * only touches what shows through the window). Pure CSS: every effect is a
+ * class from lib/effects.ts' effectClass(); base rule hides the overlay when
+ * the effect is none/unknown.
+ */
+.media-layer__fx {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* blur — smears the media, contained by the window's clip-path */
+.fx--blur {
+  display: block;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* rain — slanted streaks sliding down; the 60px gradient period is matched
+   by the 59px translateY so the loop seam is invisible */
+.fx--rain {
+  display: block;
+}
+.fx--rain::before {
+  content: "";
+  position: absolute;
+  inset: -80px 0;
+  background-image: linear-gradient(
+    100deg,
+    transparent 0 8px,
+    rgba(186, 220, 255, 0.5) 8px 10px,
+    transparent 10px 27px,
+    rgba(186, 220, 255, 0.25) 27px 28px,
+    transparent 28px 60px
+  );
+  animation: fx-rain 0.6s linear infinite;
+}
+@keyframes fx-rain {
+  from { transform: translateY(0); }
+  to { transform: translateY(59px); }
+}
+
+/* snow — dot layers drifting straight down (one tile row per loop) */
+.fx--snow {
+  display: block;
+}
+.fx--snow::before {
+  content: "";
+  position: absolute;
+  inset: -50% -20%;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.5px, transparent 2px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.6) 2.5px, transparent 3px);
+  background-size: 47px 61px, 83px 97px;
+  background-position: 0 0, 20px 30px;
+  animation: fx-snow 5s linear infinite;
+}
+@keyframes fx-snow {
+  from { transform: translateY(-61px); }
+  to { transform: translateY(61px); }
+}
+
+/* cyberpunk — duotone wash + scanlines + a slow scan sweep */
+.fx--cyberpunk {
+  display: block;
+  backdrop-filter: saturate(1.7) contrast(1.25) hue-rotate(-12deg);
+  -webkit-backdrop-filter: saturate(1.7) contrast(1.25) hue-rotate(-12deg);
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px),
+    linear-gradient(120deg, rgba(255, 0, 153, 0.32), transparent 45%, rgba(0, 255, 240, 0.3));
+  mix-blend-mode: screen;
+}
+.fx--cyberpunk::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18%;
+  background: linear-gradient(180deg, transparent, rgba(125, 211, 252, 0.25), transparent);
+  animation: fx-scan 3.2s linear infinite;
+}
+@keyframes fx-scan {
+  from { top: -20%; }
+  to { top: 110%; }
+}
+
+/* glitch — hue-shifted slice bands + a global flicker */
+.fx--glitch {
+  display: block;
+  animation: fx-glitch-flicker 1.6s steps(1) infinite;
+}
+.fx--glitch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  backdrop-filter: hue-rotate(90deg);
+  -webkit-backdrop-filter: hue-rotate(90deg);
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 0, 90, 0.14) 0 6px, transparent 6px 18px,
+      rgba(0, 255, 255, 0.12) 18px 24px, transparent 24px 48px);
+  animation: fx-glitch-slice 0.45s steps(2) infinite;
+}
+@keyframes fx-glitch-slice {
+  0% { clip-path: inset(0 0 68% 0); transform: translateX(-6px); }
+  50% { clip-path: inset(42% 0 22% 0); transform: translateX(6px); }
+  100% { clip-path: inset(76% 0 0 0); transform: translateX(-4px); }
+}
+@keyframes fx-glitch-flicker {
+  0%, 92% { opacity: 1; }
+  94% { opacity: 0.55; }
+  96% { opacity: 1; }
+  98% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/*
+ * Motions — animate the CLIP element, i.e. the window itself moves (and the
+ * media inside rides along). The media's transform stays purely the JS
+ * mirror∘align matrix — never animated here (decision 6).
+ */
+.motion--shake {
+  animation: motion-shake 0.12s linear infinite;
+}
+@keyframes motion-shake {
+  0% { transform: translate(-3px, 2px); }
+  25% { transform: translate(3px, -2px); }
+  50% { transform: translate(-2px, -3px); }
+  75% { transform: translate(2px, 3px); }
+  100% { transform: translate(-3px, 2px); }
+}
+
+.motion--float {
+  animation: motion-float 3.4s ease-in-out infinite alternate;
+}
+@keyframes motion-float {
+  from { transform: translateY(-1.6%); }
+  to { transform: translateY(1.6%); }
+}
+
+.motion--zoom {
+  animation: motion-zoom 2.2s ease-in-out infinite alternate;
+}
+@keyframes motion-zoom {
+  from { transform: scale(1); }
+  to { transform: scale(1.06); }
+}
+
+.motion--pulse {
+  animation: motion-pulse 1.4s ease-in-out infinite alternate;
+}
+@keyframes motion-pulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.5); }
+}
+
+.motion--parallax {
+  animation: motion-parallax 6s ease-in-out infinite alternate;
+}
+@keyframes motion-parallax {
+  from { transform: translate(-2.5%, -2%); }
+  to { transform: translate(2.5%, 2%); }
+}
+
 /* ----------------------------------------------------------------- controls */
 
 .controls {

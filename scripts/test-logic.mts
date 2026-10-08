@@ -6,6 +6,7 @@ import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../l
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import { HandFrameEngine } from "../lib/engine";
+import { effectClass, motionClass, nextEffect } from "../lib/effects";
 import {
   clipPathPolygon,
   mediaMatrix,
@@ -1853,6 +1854,40 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
     JSON.stringify(st)
   );
   eng.dispose();
+}
+
+console.log("\n[35] appearance — effect/motion render classes and effect cycling (Slice E)");
+{
+  const effectExpect: Array<[string, string]> = [
+    ["blur", "fx--blur"],
+    ["rain", "fx--rain"],
+    ["snow", "fx--snow"],
+    ["cyberpunk", "fx--cyberpunk"],
+    ["glitch", "fx--glitch"],
+  ];
+  for (const [id, cls] of effectExpect) {
+    check(`effect "${id}" renders as ${cls}`, effectClass(id) === cls, effectClass(id));
+  }
+  check('effect "none" renders nothing', effectClass("none") === "", JSON.stringify(effectClass("none")));
+  check("unknown effect renders nothing", effectClass("shaders") === "", effectClass("shaders"));
+
+  const motionExpect: Array<[string, string]> = [
+    ["shake", "motion--shake"],
+    ["float", "motion--float"],
+    ["zoom", "motion--zoom"],
+    ["pulse", "motion--pulse"],
+    ["parallax", "motion--parallax"],
+  ];
+  for (const [id, cls] of motionExpect) {
+    check(`motion "${id}" renders as ${cls}`, motionClass(id) === cls, motionClass(id));
+  }
+  check('motion "none" renders nothing', motionClass("none") === "", JSON.stringify(motionClass("none")));
+  check("unknown motion renders nothing", motionClass("orbit") === "", motionClass("orbit"));
+
+  check("next effect from none is blur", nextEffect("none") === "blur", nextEffect("none"));
+  check("next effect from blur is rain", nextEffect("blur") === "rain", nextEffect("blur"));
+  check("next effect wraps glitch back to none", nextEffect("glitch") === "none", nextEffect("glitch"));
+  check("unknown effect restarts the cycle at none", nextEffect("wat") === "none", nextEffect("wat"));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { clipPathPolygon, mediaMatrix, MIRROR_TRANSFORM } from "@/lib/stage";
+import { effectClass, motionClass } from "@/lib/effects";
 import type { Snapshot } from "@/lib/types";
 
 export type MediaLayerProps = {
@@ -13,6 +14,10 @@ export type MediaLayerProps = {
    * uploaded media has unknown landmarks and must stay untransformed.
    */
   faceAlignEnabled?: boolean;
+  /** Active effect id — renders the overlay inside the window (Slice E). */
+  effect?: string;
+  /** Active motion id — animates the window itself (Slice E, decision 6). */
+  motion?: string;
 };
 
 /**
@@ -23,6 +28,12 @@ export type MediaLayerProps = {
  *   └── ClipWindow           (clip-path only — the hand-made window)
  *       └── MediaContent     (transform only — mirror + face alignment)
  *           └── <img>/<video>
+ *       └── FxOverlay        (effect — sibling AFTER content, clipped with
+ *                             the window so effects only touch what shows
+ *                             through it)
+ *
+ * Motion rides the clip element: the WINDOW moves, the media inside keeps
+ * its mirror∘align matrix untouched (decision 6).
  *
  * Visibility is controlled by clip-path: `inset(50%)` (zero-area) when
  * inactive, the hand-made polygon when active. No opacity toggling — the
@@ -32,11 +43,19 @@ export type MediaLayerProps = {
  * in video-pixel space by lib/faceAlignment.ts, converted to a CSS matrix
  * here. The mirror is composed into the same matrix so the two never fight.
  */
-export function MediaLayer({ subscribe, src, faceAlignEnabled = true }: MediaLayerProps) {
+export function MediaLayer({
+  subscribe,
+  src,
+  faceAlignEnabled = true,
+  effect = "none",
+  motion = "none",
+}: MediaLayerProps) {
   const clipRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const [isVideo, setIsVideo] = useState(false);
+  const fxClass = effectClass(effect);
+  const motionCss = motionClass(motion);
   useEffect(() => {
     setIsVideo(/\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(src));
   }, [src]);
@@ -87,7 +106,7 @@ export function MediaLayer({ subscribe, src, faceAlignEnabled = true }: MediaLay
 
   return (
     <div className="media-layer" aria-hidden="true">
-      <div ref={clipRef} className="media-layer__clip">
+      <div ref={clipRef} className={`media-layer__clip${motionCss ? ` ${motionCss}` : ""}`}>
         <div
           ref={contentRef}
           className="media-layer__content"
@@ -107,6 +126,7 @@ export function MediaLayer({ subscribe, src, faceAlignEnabled = true }: MediaLay
             <img className="media-layer__media" src={src} alt="" />
           )}
         </div>
+        <div className={`media-layer__fx${fxClass ? ` ${fxClass}` : ""}`} />
       </div>
     </div>
   );

@@ -74,6 +74,11 @@ export function StatusPanel({ status }: StatusPanelProps) {
       value: status.frame === "active" ? "Visible" : "Inactive",
       tone: status.frame === "active" ? "ok" : undefined,
     },
+    // Active menu selections — the fastest way to confirm a pick registered
+    // (the menu highlight closes with the menu; this row outlives it).
+    { label: "Template", value: status.template },
+    { label: "Effect", value: status.effect },
+    { label: "Motion", value: status.motion },
   ];
 
   return (
