@@ -1749,8 +1749,8 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
     TEMPLATE_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "EFFECTS = the 5 MVP effects (no None row)",
-    EFFECT_ITEMS.map((i) => i.id).join(",") === "blur,rain,snow,cyberpunk,glitch",
+    "EFFECTS = the 7 canvas effects (no None row)",
+    EFFECT_ITEMS.map((i) => i.id).join(",") === "blur,rain,snow,fog,cyberpunk,glitch,comic",
     EFFECT_ITEMS.map((i) => i.id).join(",")
   );
   check(
@@ -1781,8 +1781,8 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   );
   const selE = menuLayout("MENU_SELECT", "EFFECTS");
   check(
-    "EFFECTS submenu: 3 tabs + 5 items",
-    selE.rows.length === 8 && selE.rows.filter((r) => r.kind === "sub").length === 5,
+    "EFFECTS submenu: 3 tabs + 7 items",
+    selE.rows.length === 10 && selE.rows.filter((r) => r.kind === "sub").length === 7,
     String(selE.rows.length)
   );
   const allBoxes = [open, selT, selE].flatMap((l) => [l.panel, l.title, ...l.rows.map((r) => r.box)]);
@@ -1929,7 +1929,8 @@ console.log("\n[35] appearance — motion classes, effect cycling, blur level cy
   check("unknown motion renders nothing", motionClass("orbit") === "", motionClass("orbit"));
 
   check("next effect from blur is rain", nextEffect("blur") === "rain", nextEffect("blur"));
-  check("next effect wraps glitch back to blur", nextEffect("glitch") === "blur", nextEffect("glitch"));
+  check("next effect from glitch is comic", nextEffect("glitch") === "comic", nextEffect("glitch"));
+  check("next effect wraps comic back to blur", nextEffect("comic") === "blur", nextEffect("comic"));
   check("unknown effect restarts the cycle at blur", nextEffect("wat") === "blur", nextEffect("wat"));
   check("no content (null) starts the cycle at blur", nextEffect(null) === "blur", String(nextEffect(null)));
 

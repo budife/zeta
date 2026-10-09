@@ -308,6 +308,17 @@ export class EffectEngine {
   private duotoneKey = "";
   private scanPattern: CanvasPattern | null = null;
   private scanPeriod = 0;
+  private comicPattern: CanvasPattern | null = null;
+  private comicPeriod = 0;
+  /** Drifting mist blobs, built once per engine (fog only). */
+  private fogBlobs: Array<{
+    ox: number;
+    oy: number;
+    r: number;
+    speed: number;
+    phase: number;
+    alpha: number;
+  }> | null = null;
 
   // Glitch burst timing (device px bands, ms clock).
   private glitchEnd = -Infinity;
@@ -386,6 +397,8 @@ export class EffectEngine {
     this.lastPolygon = null;
     this.duotone = null;
     this.scanPattern = null;
+    this.comicPattern = null;
+    this.fogBlobs = null;
     this.canvas.width = 0;
     this.canvas.height = 0;
     effectStats.effect = "";
@@ -413,6 +426,8 @@ export class EffectEngine {
       this.duotoneKey = "";
       this.scanPattern = null;
       this.scanPeriod = 0;
+      this.comicPattern = null;
+      this.comicPeriod = 0;
     }
     return w / cssW;
   }
@@ -453,9 +468,14 @@ export class EffectEngine {
     const m = cameraCoverTransform(cssW, cssH, videoWidth, videoHeight);
     ctx.setTransform(m.a * scale, m.b * scale, m.c * scale, m.d * scale, m.e * scale, m.f * scale);
     // Cyberpunk's colour grade belongs to the camera draw itself, so it
-    // processes real pixels (the old CSS backdrop-filter could not).
+    // processes real pixels (the old CSS backdrop-filter could not). Comic
+    // gets its vivid print contrast the same way, before the cell pass.
     ctx.filter =
-      this.effectId === "cyberpunk" ? "saturate(1.7) contrast(1.25) hue-rotate(-12deg)" : "none";
+      this.effectId === "cyberpunk"
+        ? "saturate(1.7) contrast(1.25) hue-rotate(-12deg)"
+        : this.effectId === "comic"
+          ? "saturate(1.6) contrast(1.7)"
+          : "none";
     ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
     ctx.filter = "none";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -472,11 +492,17 @@ export class EffectEngine {
       case "snow":
         this.particlePass("snow", polygon, cssW, cssH, scale, now);
         break;
+      case "fog":
+        this.fogPass(cssW, cssH, scale, now);
+        break;
       case "cyberpunk":
         this.cyberPass(scale, now);
         break;
       case "glitch":
         this.glitchPass(now);
+        break;
+      case "comic":
+        this.comicPass(scale);
         break;
     }
   }
@@ -498,9 +524,11 @@ export class EffectEngine {
     sctx.filter = "none";
 
     if (this.params.blurQuality === "low") {
+      // Half-res pass drawn into the TOP-LEFT REGION of the full-size
+      // scratch — the canvas never reallocates (a resize would clear it and
+      // cost an allocation per frame).
       const w2 = Math.max(1, sw >> 1);
       const h2 = Math.max(1, sh >> 1);
-      this.ensureScratch(w2, h2);
       sctx.clearRect(0, 0, w2, h2);
       sctx.filter = `blur(${(radius * 0.5).toFixed(1)}px)`;
       sctx.drawImage(ctx.canvas, 0, 0, sw, sh, 0, 0, w2, h2);
@@ -640,6 +668,93 @@ export class EffectEngine {
     ctx.fillStyle = sweep;
     ctx.fillRect(0, y, sw, bandH);
     ctx.globalCompositeOperation = "source-over";
+  }
+
+  /**
+   * Natural fog: a faint base haze plus eight large soft mist blobs drifting
+   * on slow independent paths, composited over the real frame (source-over,
+   * low alpha) — no repeating tiles, no seams when the window moves.
+   */
+  private fogPass(cssW: number, cssH: number, scale: number, now: number): void {
+    if (!this.fogBlobs) {
+      this.fogBlobs = Array.from({ length: 8 }, () => ({
+        ox: Math.random(),
+        oy: Math.random() * 0.8,
+        r: 0.35 + Math.random() * 0.3,
+        speed: 0.00004 + Math.random() * 0.0001, // rad/ms — full drift cycle in ~minutes
+        phase: Math.random() * Math.PI * 2,
+        alpha: 0.05 + Math.random() * 0.06,
+      }));
+    }
+    const ctx = this.ctx;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0); // draw in css px
+    ctx.fillStyle = "rgba(230, 235, 243, 0.05)";
+    ctx.fillRect(0, 0, cssW, cssH);
+    const maxDim = Math.max(cssW, cssH);
+    for (const b of this.fogBlobs) {
+      const x = (b.ox + Math.sin(now * b.speed + b.phase) * 0.18) * cssW;
+      const y = (b.oy + Math.cos(now * b.speed * 0.7 + b.phase * 1.3) * 0.1) * cssH;
+      const radius = b.r * maxDim;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      g.addColorStop(0, `rgba(238, 242, 248, ${b.alpha.toFixed(3)})`);
+      g.addColorStop(1, "rgba(238, 242, 248, 0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * Comic: quantise the graded frame into ~5 css px cells (downscale →
+   * nearest-neighbour upscale) and multiply a cached halftone dot grid over
+   * it — posterised print blocks with an ink-screen texture.
+   */
+  private comicPass(scale: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+    const step = Math.max(2, Math.round(5 * scale)); // cell size, device px
+    const w2 = Math.max(1, Math.round(sw / step));
+    const h2 = Math.max(1, Math.round(sh / step));
+
+    this.ensureScratch(sw, sh);
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.filter = "none";
+    sctx.clearRect(0, 0, w2, h2);
+    sctx.drawImage(ctx.canvas, 0, 0, sw, sh, 0, 0, w2, h2);
+
+    ctx.clearRect(0, 0, sw, sh);
+    ctx.imageSmoothingEnabled = false; // hard cells, not a soft downscale
+    ctx.drawImage(this.scratch, 0, 0, w2, h2, 0, 0, sw, sh);
+    ctx.imageSmoothingEnabled = true;
+
+    const period = Math.max(4, Math.round(4 * scale));
+    if (!this.comicPattern || this.comicPeriod !== period) {
+      const tile = document.createElement("canvas");
+      tile.width = period;
+      tile.height = period;
+      const tctx = tile.getContext("2d");
+      if (tctx) {
+        tctx.fillStyle = "rgba(18, 14, 26, 0.5)";
+        tctx.beginPath();
+        tctx.arc(period * 0.25, period * 0.25, period * 0.2, 0, Math.PI * 2);
+        tctx.fill();
+        tctx.beginPath();
+        tctx.arc(period * 0.75, period * 0.75, period * 0.2, 0, Math.PI * 2);
+        tctx.fill();
+        this.comicPattern = ctx.createPattern(tile, "repeat");
+        this.comicPeriod = period;
+      }
+    }
+    if (this.comicPattern) {
+      ctx.globalCompositeOperation = "multiply";
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = this.comicPattern;
+      ctx.fillRect(0, 0, sw, sh);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+    }
   }
 
   /**

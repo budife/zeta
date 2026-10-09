@@ -49,7 +49,14 @@ export function nextEffect(current: string | null): string {
  */
 
 /** Ids the EFFECTS menu can produce — the whitelist for `status.effect`. */
-export type EffectId = "blur" | "rain" | "snow" | "cyberpunk" | "glitch";
+export type EffectId =
+  | "blur"
+  | "rain"
+  | "snow"
+  | "fog"
+  | "cyberpunk"
+  | "glitch"
+  | "comic";
 
 /** The blur intensity cycle, shown on the control row while blur is active. */
 export type BlurLevel = "soft" | "medium" | "strong";
@@ -76,8 +83,10 @@ export const EFFECT_TUNING: Record<EffectId, EffectParams> = {
   blur: { blurRadius: 14, blurQuality: "high", edgeFeather: 16, updateRate: 60, particleCount: 0 },
   rain: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 60, particleCount: 150 },
   snow: { blurRadius: 0, blurQuality: "high", edgeFeather: 12, updateRate: 60, particleCount: 120 },
+  fog: { blurRadius: 0, blurQuality: "high", edgeFeather: 14, updateRate: 30, particleCount: 0 },
   cyberpunk: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
   glitch: { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 60, particleCount: 0 },
+  comic: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 60, particleCount: 0 },
 };
 
 export const BLUR_TUNING: Record<BlurLevel, EffectParams> = {

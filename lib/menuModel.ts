@@ -49,14 +49,18 @@ export const TEMPLATE_ITEMS: MenuItemDef[] = [
   { id: "upload", label: "Upload Media" },
 ];
 
-/** EFFECTS: the 5 MVP effects (decision 4). No "none" row — leaving the
- *  effect category (by picking a template/motion) is what turns it off. */
+/** EFFECTS: the 7 canvas effects (decision 4 + the effects upgrade — fog and
+ *  comic are new; grayscale/neon/particles are NOT implemented and therefore
+ *  not offered). No "none" row — leaving the effect category (by picking a
+ *  template/motion) is what turns it off. */
 export const EFFECT_ITEMS: MenuItemDef[] = [
   { id: "blur", label: "Blur" },
   { id: "rain", label: "Rain" },
   { id: "snow", label: "Snow" },
+  { id: "fog", label: "Fog" },
   { id: "cyberpunk", label: "Cyberpunk" },
   { id: "glitch", label: "Glitch" },
+  { id: "comic", label: "Comic" },
 ];
 
 /** MOTION: the 5 MVP motions (decision 4 / spec motion list), no "none" row. */
