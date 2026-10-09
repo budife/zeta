@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { clipPathPolygon, mediaMatrix, MIRROR_TRANSFORM } from "@/lib/stage";
 import { motionClass, type BlurLevel } from "@/lib/effects";
 import { EffectEngine } from "@/lib/effectEngine";
+import { MotionEngine, isCanvasMotion } from "@/lib/motionEngine";
+import { OverlayRenderer, isOverlayTemplate, type OverlayTemplateId } from "@/lib/overlayTemplates";
 import { mediaKindFromSource } from "@/lib/media";
 import type { Snapshot } from "@/lib/types";
 import type { MenuPick } from "@/lib/modes";
@@ -83,12 +85,29 @@ export function MediaLayer({
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const motionVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<EffectEngine | null>(null);
+  const motionEngineRef = useRef<MotionEngine | null>(null);
+  const overlayRendererRef = useRef<OverlayRenderer | null>(null);
   const [isVideo, setIsVideo] = useState(false);
 
   // Render gates: each mode owns exactly one layer (mutual exclusion).
   const effectCanvas = contentMode === "effect" && effect ? effect : null;
-  const motionCss = contentMode === "motion" && motion ? motionClass(motion) : "";
+  const motionCss =
+    contentMode === "motion" && motion && !isCanvasMotion(motion)
+      ? motionClass(motion)
+      : "";
+  // Canvas motions (echo, freeze, shutter, portal, reality-zoom) render via
+  // MotionEngine instead of the CSS motion wrapper.
+  const canvasMotion =
+    contentMode === "motion" && motion && isCanvasMotion(motion) ? motion : null;
+  // Overlay templates (face-wireframe, cyber-mask, …) render a canvas on top
+  // of the camera instead of an <img>/<video> media element.
+  const overlayTemplate =
+    contentMode === "template" && src !== null && isOverlayTemplate(src)
+      ? (src as OverlayTemplateId)
+      : null;
 
   // Effect engine lifecycle: one engine per (effect id, blur level). Its
   // presence doubles as the render gate inside the snapshot callback, so the
@@ -108,6 +127,40 @@ export function MediaLayer({
       if (engineRef.current === engine) engineRef.current = null;
     };
   }, [effectCanvas, blurLevel]);
+
+  // Motion engine lifecycle: one engine per canvas-motion id.
+  useEffect(() => {
+    if (!canvasMotion) {
+      motionEngineRef.current?.dispose();
+      motionEngineRef.current = null;
+      return;
+    }
+    const canvas = motionCanvasRef.current;
+    if (!canvas) return;
+    const engine = new MotionEngine(canvas, canvasMotion);
+    motionEngineRef.current = engine;
+    return () => {
+      engine.dispose();
+      if (motionEngineRef.current === engine) motionEngineRef.current = null;
+    };
+  }, [canvasMotion]);
+
+  // Overlay template lifecycle: one renderer per overlay id.
+  useEffect(() => {
+    if (!overlayTemplate) {
+      overlayRendererRef.current?.dispose();
+      overlayRendererRef.current = null;
+      return;
+    }
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const renderer = new OverlayRenderer(canvas, overlayTemplate);
+    overlayRendererRef.current = renderer;
+    return () => {
+      renderer.dispose();
+      if (overlayRendererRef.current === renderer) overlayRendererRef.current = null;
+    };
+  }, [overlayTemplate]);
 
   useEffect(() => {
     setIsVideo(mediaKindFromSource(src, srcMimeType) === "video");
@@ -179,6 +232,35 @@ export function MediaLayer({
         }
       }
 
+      // ---- motion canvas: frame-history / pixel motions (echo, freeze, …) ----
+      const motionEngine = motionEngineRef.current;
+      if (motionEngine) {
+        if (camera && camera.videoWidth > 0 && frameActive) {
+          motionEngine.render({
+            video: camera,
+            width: clip.clientWidth,
+            height: clip.clientHeight,
+            videoWidth,
+            videoHeight,
+            now: performance.now(),
+          });
+        } else {
+          motionEngine.clear();
+        }
+      }
+
+      // ---- overlay template: face/pose landmarks drawn on camera ----
+      const overlay = overlayRendererRef.current;
+      if (overlay) {
+        overlay.render({
+          faceLandmarks: snapshot.faceLandmarks,
+          poseLandmarks: snapshot.poseLandmarks,
+          width: clip.clientWidth,
+          height: clip.clientHeight,
+          now: performance.now(),
+        });
+      }
+
       // ---- media transform (template mode only; the element may be absent) ----
       const content = contentRef.current;
       if (!content) return;
@@ -236,6 +318,8 @@ export function MediaLayer({
             />
           </div>
         )}
+        {canvasMotion && <canvas ref={motionCanvasRef} className="media-layer__effect" />}
+        {overlayTemplate && <canvas ref={overlayCanvasRef} className="media-layer__effect" />}
         {effectCanvas && <canvas ref={canvasRef} className="media-layer__effect" />}
       </div>
     </div>

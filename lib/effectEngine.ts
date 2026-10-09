@@ -36,6 +36,15 @@ import {
   type BlurLevel,
   type EffectParams,
 } from "./effects";
+import {
+  ASCII_RAMP,
+  asciiRampIndex,
+  asciiGridForStage,
+  asciiPalette,
+  asciiCellSize,
+  isAccentChar,
+  type AsciiVariant,
+} from "./ascii";
 
 export type Box = { x: number; y: number; width: number; height: number };
 export type Rng = () => number;
@@ -563,6 +572,34 @@ export class EffectEngine {
       case "comic":
         this.comicPass(scale, now);
         break;
+      case "ascii-live":
+      case "ascii-matrix":
+      case "ascii-rgb":
+      case "ascii-trail":
+      case "ascii-holo":
+        this.asciiPass(this.effectId.replace("ascii-", "") as AsciiVariant, cssW, cssH, scale, now);
+        break;
+      case "thermal":
+        this.thermalPass(scale);
+        break;
+      case "film":
+        this.filmPass(scale, now);
+        break;
+      case "heat":
+        this.heatPass(scale, now);
+        break;
+      case "holo":
+        this.holoPass(scale, now);
+        break;
+      case "neon":
+        this.neonPass(scale);
+        break;
+      case "particles":
+        this.burstParticlePass(polygon, cssW, cssH, scale, now);
+        break;
+      case "portal":
+        this.portalEffectPass(scale, now);
+        break;
     }
   }
 
@@ -1071,6 +1108,447 @@ export class EffectEngine {
         invert: rng() < T.invertChance,
       });
     }
+  }
+
+  /* ── New effects (Phase C + D) ─────────────────────────────────────────── */
+
+  /**
+   * Shared ASCII renderer: downsample camera → luminance → ramp char → draw.
+   * All five ASCII variants use this one pipeline; only the palette and
+   * optional overlays differ.
+   */
+  private asciiPass(variant: AsciiVariant, cssW: number, cssH: number, scale: number, now: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+    const palette = asciiPalette(variant);
+    const { cellW: cellWCss, cellH: cellHCss } = asciiCellSize(cssW, 80);
+    const cellW = Math.max(2, Math.round(cellWCss * scale));
+    const cellH = Math.max(2, Math.round(cellHCss * scale));
+    const { cols, rows } = asciiGridForStage(sw, sh, cellW, cellH);
+    if (cols < 1 || rows < 1) return;
+
+    // Downsample the base frame to a tiny canvas (one pixel per cell).
+    const sampleW = cols;
+    const sampleH = rows;
+    this.ensureScratch(Math.max(sampleW, this.scratch.width), Math.max(sampleH, this.scratch.height));
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.filter = "none";
+    sctx.clearRect(0, 0, sampleW, sampleH);
+    sctx.drawImage(ctx.canvas, 0, 0, sw, sh, 0, 0, sampleW, sampleH);
+
+    // Read pixel data (graceful fallback if getImageData is blocked).
+    let data: Uint8ClampedArray;
+    try {
+      data = sctx.getImageData(0, 0, sampleW, sampleH).data;
+    } catch {
+      // Tainted canvas or security error — fall back to showing the base frame.
+      return;
+    }
+
+    // Fill background.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = palette.bg;
+    ctx.fillRect(0, 0, sw, sh);
+
+    // Draw characters.
+    const fontSize = Math.max(6, Math.round(cellH * 0.85));
+    ctx.font = `${fontSize}px "Courier New", monospace`;
+    ctx.textBaseline = "top";
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const idx = (row * sampleW + col) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        const rampIdx = asciiRampIndex(r, g, b);
+        const ch = ASCII_RAMP[rampIdx];
+        if (ch === " ") continue; // skip blank cells for performance
+
+        if (isAccentChar(rampIdx)) {
+          ctx.fillStyle = palette.accent;
+        } else if (palette.useSourceColor) {
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+        } else {
+          ctx.fillStyle = palette.fg;
+        }
+        ctx.fillText(ch, col * cellW, row * cellH);
+      }
+    }
+
+    // Scan-line overlay (holo variant).
+    if (palette.scan) {
+      const period = Math.max(2, Math.round(3 * scale));
+      ctx.fillStyle = palette.scan;
+      for (let y = 0; y < sh; y += period) {
+        ctx.fillRect(0, y, sw, Math.max(1, Math.round(scale)));
+      }
+    }
+
+    // RGB chromatic split overlay for ascii-rgb variant.
+    if (variant === "rgb") {
+      this.asciiRgbSplit(sw, sh, scale, now);
+    }
+  }
+
+  /** RGB ASCII variant: three channel-isolated copies at slight offsets. */
+  private asciiRgbSplit(sw: number, sh: number, scale: number, now: number): void {
+    const ctx = this.ctx;
+    const dx = Math.max(2, Math.round(2 * scale));
+    this.tempA = this.reuseChannelTemp(this.tempA, sw, sh);
+    this.tempB = this.reuseChannelTemp(this.tempB, sw, sh);
+    if (!this.tempA || !this.tempB) return;
+
+    const a = this.tempA;
+    a.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    a.ctx.globalCompositeOperation = "source-over";
+    a.ctx.clearRect(0, 0, sw, sh);
+    a.ctx.drawImage(ctx.canvas, 0, 0);
+    a.ctx.globalCompositeOperation = "multiply";
+    a.ctx.fillStyle = "#ff0000";
+    a.ctx.fillRect(0, 0, sw, sh);
+
+    const b = this.tempB;
+    b.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    b.ctx.globalCompositeOperation = "source-over";
+    b.ctx.clearRect(0, 0, sw, sh);
+    b.ctx.drawImage(ctx.canvas, 0, 0);
+    b.ctx.globalCompositeOperation = "multiply";
+    b.ctx.fillStyle = "#00ffff";
+    b.ctx.fillRect(0, 0, sw, sh);
+
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(a.canvas, -dx, 0);
+    ctx.drawImage(b.canvas, dx, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  /** Thermal: false-colour heat map from luminance (blue → red → white). */
+  private thermalPass(scale: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+    const sampleW = Math.max(1, sw >> 2);
+    const sampleH = Math.max(1, sh >> 2);
+
+    this.ensureScratch(Math.max(sampleW, this.scratch.width), Math.max(sampleH, this.scratch.height));
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, sampleW, sampleH);
+    sctx.drawImage(ctx.canvas, 0, 0, sw, sh, 0, 0, sampleW, sampleH);
+
+    let data: Uint8ClampedArray;
+    try {
+      data = sctx.getImageData(0, 0, sampleW, sampleH).data;
+    } catch {
+      return;
+    }
+
+    // Build a thermal colour lookup (256 entries).
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    const out = sctx; // reuse scratch for the colourised version
+    out.setTransform(1, 0, 0, 1, 0, 0);
+    out.globalCompositeOperation = "source-over";
+    out.clearRect(0, 0, sampleW, sampleH);
+
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      const t = lum / 255;
+      // Blue → purple → red → orange → white
+      const r = Math.min(255, Math.round(t * 3 * 255));
+      const g = Math.max(0, Math.min(255, Math.round((t - 0.33) * 3 * 255)));
+      const b = Math.max(0, Math.min(255, Math.round((1 - t * 2) * 255)));
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 255;
+    }
+    out.putImageData(new ImageData(data as unknown as Uint8ClampedArray<ArrayBuffer>, sampleW, sampleH), 0, 0);
+
+    // Upscale back to full size.
+    ctx.clearRect(0, 0, sw, sh);
+    ctx.drawImage(this.scratch, 0, 0, sampleW, sampleH, 0, 0, sw, sh);
+  }
+
+  /** Film: grain noise + vignette + slight desaturation. */
+  private filmPass(scale: number, now: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+
+    // Desaturate slightly.
+    this.ensureScratch(sw, sh);
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.filter = "saturate(0.7) contrast(1.1)";
+    sctx.clearRect(0, 0, sw, sh);
+    sctx.drawImage(ctx.canvas, 0, 0);
+    sctx.filter = "none";
+    ctx.clearRect(0, 0, sw, sh);
+    ctx.drawImage(this.scratch, 0, 0);
+
+    // Grain: random dots (drawn at low res then upscaled for softness).
+    const grainW = Math.max(1, sw >> 1);
+    const grainH = Math.max(1, sh >> 1);
+    this.ensureScratch(grainW, grainH);
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, grainW, grainH);
+    const seed = Math.floor(now / 80); // change grain every ~80 ms
+    for (let i = 0; i < grainW * grainH * 0.04; i++) {
+      const x = ((seed * 31 + i * 17) % grainW);
+      const y = ((seed * 37 + i * 23) % grainH);
+      const v = ((seed + i * 13) % 255);
+      sctx.fillStyle = `rgba(${v},${v},${v},0.25)`;
+      sctx.fillRect(x, y, 2, 2);
+    }
+    ctx.globalCompositeOperation = "overlay";
+    ctx.globalAlpha = 0.35;
+    ctx.drawImage(this.scratch, 0, 0, grainW, grainH, 0, 0, sw, sh);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+
+    // Vignette.
+    const g = ctx.createRadialGradient(sw / 2, sh / 2, sw * 0.3, sw / 2, sh / 2, sw * 0.75);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.45)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, sw, sh);
+  }
+
+  /** Heat: wavy horizontal displacement (heat haze distortion). */
+  private heatPass(scale: number, now: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+
+    this.ensureScratch(sw, sh);
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.globalCompositeOperation = "source-over";
+    sctx.clearRect(0, 0, sw, sh);
+    sctx.drawImage(ctx.canvas, 0, 0);
+
+    ctx.clearRect(0, 0, sw, sh);
+    const strips = 80;
+    const stripH = sh / strips;
+    const amplitude = 4 * scale;
+    const frequency = 0.03;
+    const speed = now * 0.003;
+    for (let i = 0; i < strips; i++) {
+      const y = i * stripH;
+      const offset = Math.round(amplitude * Math.sin(y * frequency + speed));
+      ctx.drawImage(this.scratch, 0, y, sw, stripH, offset, y, sw, stripH);
+    }
+  }
+
+  /** Hologram: scanlines + blue tint + slow flicker + subtle chromatic offset. */
+  private holoPass(scale: number, now: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+
+    // Blue tint overlay.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "overlay";
+    ctx.fillStyle = "rgba(0, 80, 180, 0.35)";
+    ctx.fillRect(0, 0, sw, sh);
+    ctx.globalCompositeOperation = "source-over";
+
+    // Scanlines.
+    const period = Math.max(2, Math.round(3 * scale));
+    ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+    for (let y = 0; y < sh; y += period) {
+      ctx.fillRect(0, y, sw, Math.max(1, Math.round(scale)));
+    }
+
+    // Slow flicker (brightness wobble).
+    const flicker = 0.92 + 0.08 * Math.sin(now * 0.012) * Math.sin(now * 0.007);
+    ctx.globalAlpha = 1 - flicker;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, sw, sh);
+    ctx.globalAlpha = 1;
+
+    // Horizontal tear line sweeping down.
+    const tearY = ((now * 0.04) % (sh + 40)) - 20;
+    ctx.fillStyle = "rgba(0, 180, 255, 0.15)";
+    ctx.fillRect(0, tearY, sw, 6 * scale);
+  }
+
+  /** Neon: edge-detect + glow. Sobel-like edge detection on a low-res sample. */
+  private neonPass(scale: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+    const sampleW = Math.max(2, sw >> 2);
+    const sampleH = Math.max(2, sh >> 2);
+
+    this.ensureScratch(Math.max(sampleW, this.scratch.width), Math.max(sampleH, this.scratch.height));
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, sampleW, sampleH);
+    sctx.drawImage(ctx.canvas, 0, 0, sw, sh, 0, 0, sampleW, sampleH);
+
+    let data: Uint8ClampedArray;
+    try {
+      data = sctx.getImageData(0, 0, sampleW, sampleH).data;
+    } catch {
+      return;
+    }
+
+    // Build luminance map.
+    const lum = new Float32Array(sampleW * sampleH);
+    for (let i = 0; i < lum.length; i++) {
+      const j = i * 4;
+      lum[i] = 0.2126 * data[j] + 0.7152 * data[j + 1] + 0.0722 * data[j + 2];
+    }
+
+    // Sobel edge detection.
+    const edges = new Float32Array(sampleW * sampleH);
+    for (let y = 1; y < sampleH - 1; y++) {
+      for (let x = 1; x < sampleW - 1; x++) {
+        const i = y * sampleW + x;
+        const gx =
+          -lum[i - sampleW - 1] - 2 * lum[i - 1] - lum[i + sampleW - 1] +
+          lum[i - sampleW + 1] + 2 * lum[i + 1] + lum[i + sampleW + 1];
+        const gy =
+          -lum[i - sampleW - 1] - 2 * lum[i - sampleW] - lum[i - sampleW + 1] +
+          lum[i + sampleW - 1] + 2 * lum[i + sampleW] + lum[i + sampleW + 1];
+        edges[i] = Math.min(255, Math.sqrt(gx * gx + gy * gy));
+      }
+    }
+
+    // Draw edges as neon glow on black.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, sw, sh);
+
+    const pixelW = sw / sampleW;
+    const pixelH = sh / sampleH;
+    ctx.fillStyle = "#00e5ff";
+    for (let y = 0; y < sampleH; y++) {
+      for (let x = 0; x < sampleW; x++) {
+        const e = edges[y * sampleW + x];
+        if (e > 40) {
+          const alpha = Math.min(1, e / 120);
+          ctx.globalAlpha = alpha * 0.8;
+          ctx.fillRect(x * pixelW, y * pixelH, pixelW + 1, pixelH + 1);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Glow: draw a blurred copy on top with lighter.
+    this.ensureScratch(sw, sh);
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.filter = `blur(${(6 * scale).toFixed(1)}px)`;
+    sctx.clearRect(0, 0, sw, sh);
+    sctx.drawImage(ctx.canvas, 0, 0);
+    sctx.filter = "none";
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(this.scratch, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  /** Particles: glowing sparks radiating from the window centre. */
+  private burstParticlePass(
+    polygon: Point[],
+    cssW: number,
+    cssH: number,
+    scale: number,
+    now: number
+  ): void {
+    const box = boundingBox(polygon);
+    if (box.width < 24 || box.height < 24) return;
+    if (this.particles.length !== this.params.particleCount) this.seed(box, cssH);
+    if (this.particles.length === 0) return;
+
+    const dt = this.lastStep === 0 ? 0 : Math.max(0, (now - this.lastStep) / 1000);
+    this.lastStep = now;
+
+    // Reposition: particles drift outward from centre.
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    for (const p of this.particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      // Respawn near centre when too far.
+      if (Math.hypot(p.x - cx, p.y - cy) > Math.max(box.width, box.height) * 0.6) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 120;
+        p.x = cx;
+        p.y = cy;
+        p.vx = Math.cos(angle) * speed;
+        p.vy = Math.sin(angle) * speed;
+        p.alpha = 0.5 + Math.random() * 0.5;
+      }
+    }
+
+    const k = scaledPx(1, cssW);
+    const ctx = this.ctx;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    for (const p of this.particles) {
+      ctx.globalAlpha = p.alpha;
+      ctx.fillStyle = "#aaddff";
+      ctx.shadowColor = "#66ccff";
+      ctx.shadowBlur = 6 * k;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(1, p.size * k), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** Portal: swirl + ring overlay on the camera frame. */
+  private portalEffectPass(scale: number, now: number): void {
+    const ctx = this.ctx;
+    const sw = this.canvas.width;
+    const sh = this.canvas.height;
+
+    this.ensureScratch(sw, sh);
+    const sctx = this.sctx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.globalCompositeOperation = "source-over";
+    sctx.clearRect(0, 0, sw, sh);
+    sctx.drawImage(ctx.canvas, 0, 0);
+
+    // Swirl distortion (strip-based).
+    ctx.clearRect(0, 0, sw, sh);
+    const cx = sw / 2;
+    const cy = sh / 2;
+    const maxR = Math.hypot(cx, cy);
+    const angle = now * 0.0008;
+    const strips = 80;
+    const stripH = sh / strips;
+    for (let i = 0; i < strips; i++) {
+      const y = i * stripH;
+      const dy = y + stripH / 2 - cy;
+      const swirl = angle * 0.12 * Math.max(0, 1 - Math.abs(dy) / maxR);
+      const offset = Math.round(swirl * sw * 0.3);
+      ctx.drawImage(this.scratch, 0, y, sw, stripH, offset, y, sw, stripH);
+    }
+
+    // Glowing ring overlay.
+    const ringRadius = Math.min(cx, cy) * 0.6;
+    const ringWidth = 8 * scale;
+    const gradient = ctx.createRadialGradient(cx, cy, ringRadius - ringWidth, cx, cy, ringRadius + ringWidth);
+    gradient.addColorStop(0, "rgba(100, 50, 255, 0)");
+    gradient.addColorStop(0.5, `rgba(140, 80, 255, ${0.4 + 0.2 * Math.sin(now * 0.004)})`);
+    gradient.addColorStop(1, "rgba(100, 50, 255, 0)");
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, sw, sh);
+    ctx.globalCompositeOperation = "source-over";
   }
 
   /** Soft alpha falloff at the window edge, masked with destination-in. */

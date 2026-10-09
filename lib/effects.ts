@@ -20,6 +20,12 @@ const MOTION_CLASSES: Record<string, string> = {
   zoom: "motion--zoom",
   pulse: "motion--pulse",
   parallax: "motion--parallax",
+  // Canvas-rendered motions: empty CSS class, MediaLayer uses MotionEngine.
+  "reality-zoom": "",
+  echo: "",
+  freeze: "",
+  shutter: "",
+  portal: "",
 };
 
 /** CSS modifier for a motion id; "" (render nothing) for none/unknown. */
@@ -56,7 +62,19 @@ export type EffectId =
   | "fog"
   | "cyberpunk"
   | "glitch"
-  | "comic";
+  | "comic"
+  | "ascii-live"
+  | "ascii-matrix"
+  | "ascii-rgb"
+  | "ascii-trail"
+  | "ascii-holo"
+  | "thermal"
+  | "film"
+  | "heat"
+  | "holo"
+  | "neon"
+  | "particles"
+  | "portal";
 
 /** The blur intensity cycle, shown on the control row while blur is active. */
 export type BlurLevel = "soft" | "medium" | "strong";
@@ -87,6 +105,20 @@ export const EFFECT_TUNING: Record<EffectId, EffectParams> = {
   cyberpunk: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
   glitch: { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 60, particleCount: 0 },
   comic: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 60, particleCount: 0 },
+  // ASCII family — low frame rate is fine (the grid is coarse).
+  "ascii-live": { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 24, particleCount: 0 },
+  "ascii-matrix": { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 24, particleCount: 0 },
+  "ascii-rgb": { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 30, particleCount: 0 },
+  "ascii-trail": { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 30, particleCount: 0 },
+  "ascii-holo": { blurRadius: 0, blurQuality: "high", edgeFeather: 8, updateRate: 24, particleCount: 0 },
+  // Colour / style effects
+  thermal: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
+  film: { blurRadius: 0, blurQuality: "high", edgeFeather: 12, updateRate: 30, particleCount: 0 },
+  heat: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
+  holo: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
+  neon: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 30, particleCount: 0 },
+  particles: { blurRadius: 0, blurQuality: "high", edgeFeather: 10, updateRate: 60, particleCount: 200 },
+  portal: { blurRadius: 0, blurQuality: "high", edgeFeather: 12, updateRate: 30, particleCount: 0 },
 };
 
 export const BLUR_TUNING: Record<BlurLevel, EffectParams> = {

@@ -4,6 +4,9 @@
  */
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
 import { mediaKindFromSource } from "../lib/media";
+import { ASCII_RAMP, asciiGridForStage, asciiRampIndex, asciiPalette, asciiCellSize, isAccentChar } from "../lib/ascii";
+import { isCanvasMotion, FrameHistory, echoAlpha, shutterWeight, MOTION_TUNING } from "../lib/motionEngine";
+import { isOverlayTemplate, overlayStyle, landmarksToPixels, FACE_WIRE_EDGES, POSE_SKELETON_EDGES } from "../lib/overlayTemplates";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import { HandFrameEngine } from "../lib/engine";
@@ -1746,11 +1749,11 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
 {
   // ---- structure & defaults (recommendations 1 & 2) ----
   check(
-    "TEMPLATE is a flat list of 12 ending with the upload row",
-    TEMPLATE_ITEMS.length === 12 &&
+    "TEMPLATE is a flat list of 16 ending with the upload row",
+    TEMPLATE_ITEMS.length === 16 &&
       TEMPLATE_ITEMS[0].id === "template" &&
-      TEMPLATE_ITEMS[11].id === "upload" &&
-      TEMPLATE_ITEMS[11].label === "Upload Media",
+      TEMPLATE_ITEMS[15].id === "upload" &&
+      TEMPLATE_ITEMS[15].label === "Upload Media",
     String(TEMPLATE_ITEMS.length)
   );
   check(
@@ -1759,13 +1762,15 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
     TEMPLATE_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "EFFECTS = the 7 canvas effects (no None row)",
-    EFFECT_ITEMS.map((i) => i.id).join(",") === "blur,rain,snow,fog,cyberpunk,glitch,comic",
+    "EFFECTS = all 19 canvas effects (no None row)",
+    EFFECT_ITEMS.map((i) => i.id).join(",") ===
+      "blur,rain,snow,fog,cyberpunk,glitch,comic,ascii-live,ascii-matrix,ascii-rgb,ascii-trail,ascii-holo,thermal,film,heat,holo,neon,particles,portal",
     EFFECT_ITEMS.map((i) => i.id).join(",")
   );
   check(
-    "MOTION = the 5 MVP motions (no None row)",
-    MOTION_ITEMS.map((i) => i.id).join(",") === "shake,float,zoom,pulse,parallax",
+    "MOTION = 5 CSS + 5 canvas motions (no None row)",
+    MOTION_ITEMS.map((i) => i.id).join(",") ===
+      "shake,float,zoom,pulse,parallax,reality-zoom,echo,freeze,shutter,portal",
     MOTION_ITEMS.map((i) => i.id).join(",")
   );
   check(
@@ -1785,14 +1790,14 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   );
   const selT = menuLayout("MENU_SELECT", "TEMPLATE");
   check(
-    "MENU_SELECT: 3 tabs + 12 template items",
-    selT.rows.length === 15 && selT.rows.filter((r) => r.kind === "sub").length === 12,
+    "MENU_SELECT: 3 tabs + 16 template items",
+    selT.rows.length === 19 && selT.rows.filter((r) => r.kind === "sub").length === 16,
     String(selT.rows.length)
   );
   const selE = menuLayout("MENU_SELECT", "EFFECTS");
   check(
-    "EFFECTS submenu: 3 tabs + 7 items",
-    selE.rows.length === 10 && selE.rows.filter((r) => r.kind === "sub").length === 7,
+    "EFFECTS submenu: 3 tabs + 19 items",
+    selE.rows.length === 22 && selE.rows.filter((r) => r.kind === "sub").length === 19,
     String(selE.rows.length)
   );
   const allBoxes = [open, selT, selE].flatMap((l) => [l.panel, l.title, ...l.rows.map((r) => r.box)]);
@@ -1940,7 +1945,8 @@ console.log("\n[35] appearance — motion classes, effect cycling, blur level cy
 
   check("next effect from blur is rain", nextEffect("blur") === "rain", nextEffect("blur"));
   check("next effect from glitch is comic", nextEffect("glitch") === "comic", nextEffect("glitch"));
-  check("next effect wraps comic back to blur", nextEffect("comic") === "blur", nextEffect("comic"));
+  check("next effect from comic is ascii-live", nextEffect("comic") === "ascii-live", nextEffect("comic"));
+  check("next effect wraps portal back to blur", nextEffect("portal") === "blur", nextEffect("portal"));
   check("unknown effect restarts the cycle at blur", nextEffect("wat") === "blur", nextEffect("wat"));
   check("no content (null) starts the cycle at blur", nextEffect(null) === "blur", String(nextEffect(null)));
 
@@ -2844,6 +2850,151 @@ console.log("\n[44] media source kind — uploaded blob videos use MIME type");
     "unknown blob MIME safely defaults to image",
     mediaKindFromSource("blob:https://local/session", "application/octet-stream") === "image"
   );
+}
+
+console.log("\n[45] ASCII renderer — shared pipeline helpers");
+{
+  // ASCII_RAMP: 10 levels from space to @.
+  check("ASCII_RAMP has 10 chars", ASCII_RAMP.length === 10, String(ASCII_RAMP.length));
+  check("ASCII_RAMP starts with space", ASCII_RAMP[0] === " ", ASCII_RAMP[0]);
+  check("ASCII_RAMP ends with @", ASCII_RAMP[9] === "@", ASCII_RAMP[9]);
+
+  // asciiRampIndex: black → 0, white → 9.
+  check("black maps to 0", asciiRampIndex(0, 0, 0) === 0, String(asciiRampIndex(0, 0, 0)));
+  check("white maps to 9", asciiRampIndex(255, 255, 255) === 9, String(asciiRampIndex(255, 255, 255)));
+  check("mid-gray maps to mid ramp", asciiRampIndex(128, 128, 128) === 5, String(asciiRampIndex(128, 128, 128)));
+  check("green is brighter than blue (Rec.709)", asciiRampIndex(0, 255, 0) > asciiRampIndex(0, 0, 255));
+
+  // asciiGridForStage: integer cols/rows, minimum 1.
+  const grid = asciiGridForStage(800, 600, 10, 14);
+  check("grid cols = 80", grid.cols === 80, String(grid.cols));
+  check("grid rows = 42", grid.rows === 42, String(grid.rows));
+  check("tiny stage clamps to 1x1", asciiGridForStage(5, 5, 10, 14).cols === 1);
+
+  // Palettes exist for all five variants.
+  for (const v of ["live", "matrix", "rgb", "trail", "holo"] as const) {
+    const p = asciiPalette(v);
+    check(`palette ${v} has bg`, typeof p.bg === "string" && p.bg.length > 0, p.bg);
+    check(`palette ${v} has fg`, typeof p.fg === "string" && p.fg.length > 0, p.fg);
+  }
+
+  // Cell size is sensible.
+  const cell = asciiCellSize(1280, 80);
+  check("cell width > 0", cell.cellW > 0, String(cell.cellW));
+  check("cell height > cell width", cell.cellH > cell.cellW, `${cell.cellW}x${cell.cellH}`);
+
+  // Accent detection: top of ramp.
+  check("index 9 is accent", isAccentChar(9) === true);
+  check("index 0 is not accent", isAccentChar(0) === false);
+}
+
+console.log("\n[46] MotionEngine — frame-history helpers and canvas motion gate");
+{
+  // isCanvasMotion gate.
+  check("echo is canvas motion", isCanvasMotion("echo") === true);
+  check("freeze is canvas motion", isCanvasMotion("freeze") === true);
+  check("shutter is canvas motion", isCanvasMotion("shutter") === true);
+  check("portal is canvas motion", isCanvasMotion("portal") === true);
+  check("reality-zoom is canvas motion", isCanvasMotion("reality-zoom") === true);
+  check("shake is NOT canvas motion", isCanvasMotion("shake") === false);
+  check("null is NOT canvas motion", isCanvasMotion(null) === false);
+
+  // FrameHistory ring buffer.
+  const fh = new FrameHistory<number>(3);
+  check("empty history size 0", fh.size === 0);
+  fh.push(10); fh.push(20); fh.push(30);
+  check("history size 3 after 3 pushes", fh.size === 3);
+  check("back(0) = newest", fh.back(0) === 30, String(fh.back(0)));
+  check("back(1) = middle", fh.back(1) === 20, String(fh.back(1)));
+  check("back(2) = oldest", fh.back(2) === 10, String(fh.back(2)));
+  fh.push(40); // wraps, evicts 10
+  check("back(0) after wrap = 40", fh.back(0) === 40, String(fh.back(0)));
+  check("back(2) after wrap = 20", fh.back(2) === 20, String(fh.back(2)));
+  check("back(3) out of range = null", fh.back(3) === null);
+
+  // echoAlpha: current is full, ghosts fade.
+  check("echo alpha k=0 = base", echoAlpha(0.5, 0.6, 0) === 0.5);
+  check("echo alpha k=1 < base", echoAlpha(0.5, 0.6, 1) < 0.5);
+  check("echo alpha decays", echoAlpha(0.5, 0.6, 2) < echoAlpha(0.5, 0.6, 1));
+  check("echo alpha clamps to 0", echoAlpha(0.5, 0.6, 20) === 0);
+
+  // shutterWeight: newest = 0, older = more weight, clamped.
+  check("shutter weight age 0 = 0", shutterWeight(0, 300) === 0);
+  check("shutter weight positive for age > 0", shutterWeight(100, 300) > 0);
+  check("shutter weight decays with age", shutterWeight(200, 300) < shutterWeight(100, 300));
+  check("shutter weight 0 for zero duration", shutterWeight(100, 0) === 0);
+
+  // Tuning constants exist.
+  check("echoCopies > 0", MOTION_TUNING.echoCopies > 0);
+  check("shutterMs > 0", MOTION_TUNING.shutterMs > 0);
+}
+
+console.log("\n[47] Overlay templates — gate, styles, landmark mapping");
+{
+  // isOverlayTemplate gate.
+  check("face-wireframe is overlay", isOverlayTemplate("face-wireframe") === true);
+  check("cyber-mask is overlay", isOverlayTemplate("cyber-mask") === true);
+  check("skeleton-overlay is overlay", isOverlayTemplate("skeleton-overlay") === true);
+  check("sci-fi-hud is overlay", isOverlayTemplate("sci-fi-hud") === true);
+  check("template.svg is NOT overlay", isOverlayTemplate("template") === false);
+  check("null is NOT overlay", isOverlayTemplate(null) === false);
+
+  // Styles exist for all four.
+  for (const id of ["face-wireframe", "cyber-mask", "skeleton-overlay", "sci-fi-hud"] as const) {
+    const s = overlayStyle(id);
+    check(`style ${id} has line colour`, typeof s.line === "string" && s.line.length > 0, s.line);
+    check(`style ${id} has lineWidth > 0`, s.lineWidth > 0, String(s.lineWidth));
+  }
+
+  // Landmark mapping: normalized → pixels, with mirror.
+  const lms = [{ x: 0.25, y: 0.5, z: 0 }, { x: 0.75, y: 0.25, z: 0 }];
+  const px = landmarksToPixels(lms, 1000, 800, true);
+  check("mirror flips x", px[0].x === 750, String(px[0].x)); // (1-0.25)*1000
+  check("y is not flipped", px[0].y === 400, String(px[0].y));
+  const pxNoMirror = landmarksToPixels(lms, 1000, 800, false);
+  check("no-mirror keeps x", pxNoMirror[0].x === 250, String(pxNoMirror[0].x));
+
+  // Connection lists are non-empty.
+  check("face wire edges exist", FACE_WIRE_EDGES.length > 0);
+  check("pose skeleton edges exist", POSE_SKELETON_EDGES.length > 0);
+  // All edge indices are valid (non-negative).
+  check(
+    "face wire edges have valid indices",
+    FACE_WIRE_EDGES.every(([a, b]) => a >= 0 && b >= 0)
+  );
+  check(
+    "pose skeleton edges have valid indices",
+    POSE_SKELETON_EDGES.every(([a, b]) => a >= 0 && b >= 0)
+  );
+}
+
+console.log("\n[48] EFFECT_ITEMS ↔ EFFECT_TUNING ↔ EffectId consistency");
+{
+  // Every menu item has tuning, and every tuning key has a menu item.
+  const itemIds = EFFECT_ITEMS.map((i) => i.id);
+  const tuningIds = Object.keys(EFFECT_TUNING);
+  check(
+    "every menu item has EFFECT_TUNING entry",
+    itemIds.every((id) => tuningIds.includes(id)),
+    itemIds.filter((id) => !tuningIds.includes(id)).join(",")
+  );
+  check(
+    "every EFFECT_TUNING key has a menu item",
+    tuningIds.every((id) => itemIds.includes(id)),
+    tuningIds.filter((id) => !itemIds.includes(id)).join(",")
+  );
+  // All 19 effects present.
+  check("exactly 19 effects", EFFECT_ITEMS.length === 19, String(EFFECT_ITEMS.length));
+  check("exactly 19 tunings", Object.keys(EFFECT_TUNING).length === 19);
+
+  // MOTION_ITEMS ↔ MOTION_CLASSES consistency (every motion id has a class entry).
+  // motionClass is exported from effects; verify all MOTION_ITEMS resolve.
+  for (const item of MOTION_ITEMS) {
+    // motionClass returns "" for canvas motions (they use MotionEngine) — that's fine.
+    // The important thing is it doesn't throw.
+    const cls = motionClass(item.id);
+    check(`motion ${item.id} resolves (class="${cls}")`, typeof cls === "string");
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

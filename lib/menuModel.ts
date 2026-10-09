@@ -40,19 +40,19 @@ const characters: MenuItemDef[] = Array.from({ length: 10 }, (_, i) => {
   return { id: `character-${n}`, label: `Character ${n}` };
 });
 
-/** TEMPLATE: one flat list of the bundled assets (recommendation 1), plus the
- *  upload row — a pick from it hands control to the file input instead of
- *  setting a template id (the renderer intercepts it). */
+/** TEMPLATE: bundled assets + overlay templates + upload row. */
 export const TEMPLATE_ITEMS: MenuItemDef[] = [
   { id: "template", label: "Template" },
   ...characters,
+  { id: "face-wireframe", label: "Face Wireframe" },
+  { id: "cyber-mask", label: "Cyber Mask" },
+  { id: "skeleton-overlay", label: "Skeleton Overlay" },
+  { id: "sci-fi-hud", label: "Sci-Fi HUD" },
   { id: "upload", label: "Upload Media" },
 ];
 
-/** EFFECTS: the 7 canvas effects (decision 4 + the effects upgrade — fog and
- *  comic are new; grayscale/neon/particles are NOT implemented and therefore
- *  not offered). No "none" row — leaving the effect category (by picking a
- *  template/motion) is what turns it off. */
+/** EFFECTS: all 19 canvas effects. No "none" row — leaving the effect
+ *  category (by picking a template/motion) is what turns it off. */
 export const EFFECT_ITEMS: MenuItemDef[] = [
   { id: "blur", label: "Blur" },
   { id: "rain", label: "Rain" },
@@ -61,15 +61,32 @@ export const EFFECT_ITEMS: MenuItemDef[] = [
   { id: "cyberpunk", label: "Cyberpunk" },
   { id: "glitch", label: "Glitch" },
   { id: "comic", label: "Comic" },
+  { id: "ascii-live", label: "Live ASCII" },
+  { id: "ascii-matrix", label: "Matrix Human" },
+  { id: "ascii-rgb", label: "RGB ASCII Glitch" },
+  { id: "ascii-trail", label: "ASCII Motion Trail" },
+  { id: "ascii-holo", label: "Holographic ASCII" },
+  { id: "thermal", label: "Thermal" },
+  { id: "film", label: "Film Grain" },
+  { id: "heat", label: "Heat Haze" },
+  { id: "holo", label: "Hologram" },
+  { id: "neon", label: "Neon Glow" },
+  { id: "particles", label: "Particles" },
+  { id: "portal", label: "Portal" },
 ];
 
-/** MOTION: the 5 MVP motions (decision 4 / spec motion list), no "none" row. */
+/** MOTION: 5 CSS motions + 5 canvas MotionEngine motions. No "none" row. */
 export const MOTION_ITEMS: MenuItemDef[] = [
   { id: "shake", label: "Shake" },
   { id: "float", label: "Float" },
   { id: "zoom", label: "Zoom" },
   { id: "pulse", label: "Pulse" },
   { id: "parallax", label: "Parallax" },
+  { id: "reality-zoom", label: "Reality Zoom" },
+  { id: "echo", label: "Time Echo" },
+  { id: "freeze", label: "Time Freeze" },
+  { id: "shutter", label: "Slow Shutter" },
+  { id: "portal", label: "Portal Motion" },
 ];
 
 /** Submenu body per top-level entry. */
@@ -116,17 +133,17 @@ export type MenuLayout = {
 
 /**
  * Geometry constants, tuned to keep the longest list (TEMPLATE: 3 tabs +
- * 12 items = 15 rows) inside a 16:9 stage with margin to spare.
+ * 16 items = 19 rows) inside a 16:9 stage with margin to spare.
  */
 const L = {
   right: 0.035, // panel's distance from the stage's right edge
   top: 0.035,
   width: 0.17,
-  pad: 0.012, // inner padding of the panel (stage fraction)
-  titleH: 0.04,
-  rowH: 0.048,
-  gap: 0.006, // between rows
-  bodyGap: 0.016, // extra break between the tabs and the submenu body
+  pad: 0.008, // inner padding of the panel (stage fraction)
+  titleH: 0.032,
+  rowH: 0.036,
+  gap: 0.003, // between rows
+  bodyGap: 0.012, // extra break between the tabs and the submenu body
 } as const;
 
 /**
