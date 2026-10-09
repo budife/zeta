@@ -86,7 +86,39 @@ function checkHandGesture(hand: Point[], mode: GestureMode): HandGestureVerdict 
 }
 
 /**
- * Step 1 — converts raw MediaPipe landmarks into the four raw frame corners.
+ * Anchor-only plausibility — the TRACK-mode fallback.
+ *
+ * The gesture classifier's job is to establish *intent* at lock time. After
+ * lock, the window is carried by the fingertips themselves, so a hand that
+ * fails the whole-hand check may still supply usable anchors: MediaPipe
+ * keeps reporting the thumb and index tips long after an occluded finger it
+ * had to extrapolate has wrecked the reach check, and a foreshortened palm
+ * at the viewport edge says nothing about whether the two tips are real.
+ *
+ * Each anchor is therefore vetted on its own. Nothing palm-relative is
+ * applied here — the tracker's per-frame jump clamp bounds any anchor that
+ * teleported instead of trusting it. A hand that cannot even present its two
+ * tips contributes nothing this frame, and its slots are *held* by the
+ * tracker rather than invented (see `StickyFrameTracker`).
+ */
+function checkAnchorsOnly(hand: Point[]): HandGestureVerdict {
+  // The two anchors are landmarks 4 and 8; without them there is nothing to take.
+  if (hand.length < HAND_LANDMARK.indexTip + 1) {
+    return { ok: false, reason: "hand-incomplete" };
+  }
+  const thumb = hand[HAND_LANDMARK.thumbTip];
+  const index = hand[HAND_LANDMARK.indexTip];
+  if (!Number.isFinite(thumb.x) || !Number.isFinite(thumb.y)) {
+    return { ok: false, reason: "anchor-not-finite" };
+  }
+  if (!Number.isFinite(index.x) || !Number.isFinite(index.y)) {
+    return { ok: false, reason: "anchor-not-finite" };
+  }
+  return { ok: true, reason: "anchor-fallback" };
+}
+
+/**
+ * Step 1 — converts raw MediaPipe landmarks into the raw frame corners.
  *
  * Each contributing hand supplies its thumb tip and index tip; the two hands
  * therefore supply the four corners of the frame, with nothing hardcoded:
@@ -95,6 +127,15 @@ function checkHandGesture(hand: Point[], mode: GestureMode): HandGestureVerdict 
  * `mode` selects the gesture strictness (see `GestureMode`): strict while
  * acquiring, forgiving once the frame is locked. Defaults to `acquire` so
  * callers that do not care keep the old behaviour.
+ *
+ * The two phases also differ in what a *degraded* hand costs:
+ *  - `acquire` needs both hands to pass the full check, so the frame can only
+ *    be established by the intended two-hand gesture (four anchors at once).
+ *  - `track` takes whatever anchors survived the frame — both hands yield four
+ *    corners, one hand yields two, and a hand that lost both its tips yields
+ *    none. The tracker holds the slots that got nothing instead of dropping
+ *    the window, so a hand lost at the viewport edge degrades the follow on
+ *    its own side only.
  */
 export function detectHandFrame(
   landmarks: NormalizedLandmark[][],
@@ -104,10 +145,24 @@ export function detectHandFrame(
 ): HandFrameDetection {
   const hands = (landmarks ?? []).map((lm) => toPixelLandmarks(lm, width, height));
 
-  const gestures = hands.map((hand) => checkHandGesture(hand, mode));
+  // ACQUIRE: the full gesture check decides intent — both hands must pass.
+  // TRACK: a hand that fails the whole-hand check is re-vetted on its anchors
+  // alone (see `checkAnchorsOnly`), because after lock the fingertips carry
+  // the window and one extrapolated or foreshortened landmark must not cost a
+  // hand both of them. The verdict records which path won, so the debug
+  // readout distinguishes "hand rejected" from "hand degraded to anchors".
+  const gestures = hands.map((hand) => {
+    const strict = checkHandGesture(hand, mode);
+    if (strict.ok || mode !== "track") return strict;
+    const fallback = checkAnchorsOnly(hand);
+    if (fallback.ok) return { ok: true, reason: `anchor-fallback:${strict.reason}` };
+    return strict;
+  });
+
   const contributing = hands.filter((_, i) => gestures[i].ok);
 
-  if (contributing.length < 2) {
+  // Locking still demands both hands. Tracking continues on whatever survived.
+  if (contributing.length < (mode === "track" ? 1 : 2)) {
     const reason =
       hands.length < 2
         ? hands.length === 0

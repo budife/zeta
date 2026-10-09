@@ -597,11 +597,14 @@ export class HandFrameEngine {
     const usable = feedFrame && hasCorners && validity.valid;
 
     // The tracker is fed BEFORE the selection machine reads its state, so the
-    // state describes this frame. Only usable corners are fed; a frame where
-    // the hands are present but the shape is degenerate counts as a miss, and
-    // the window holds its last good shape instead of collapsing.
+    // state describes this frame. Locking still demands a full valid quad;
+    // once locked, EVERY anchor that survived the frame is fed through — a
+    // hand lost at the viewport edge takes only its own two slots with it, and
+    // the tracker holds them instead of dropping the window.
+    const trackerCorners =
+      usable || (wasActive && detection.corners.length > 0) ? detection.corners : null;
     if (feedFrame) {
-      this.tracker.update(usable ? detection.corners : null, dt);
+      this.tracker.update(trackerCorners, dt);
       // While still FORMING the window is not yet a selection, so stale dots
       // are cleared shortly after the hands leave. A live selection holds for
       // the full grace budget — the machine, not the tracker, decides when it
@@ -613,15 +616,22 @@ export class HandFrameEngine {
     const windowCorners = this.tracker.value ?? [];
 
     // RELEASE RULE: while locked, the selection is only invalid when the
-    // tracker has given up — i.e. the hands were genuinely gone for
-    // maxMissedFrames. A tilted, trapezoid, or momentarily misread frame never
-    // counts toward release on its own. While acquiring, the strict quad check
-    // still gates the initial lock. (Both blocks share `feedFrame`: the
-    // gesture guard freezes the whole selection advance, tracker included.)
+    // tracker has given up — i.e. BOTH hands were genuinely gone for
+    // maxMissedFrames (per-slot: one hand lost at the edge never reaches the
+    // clock). A tilted, trapezoid, partially-detected or momentarily misread
+    // frame never counts toward release on its own. While acquiring, the
+    // strict quad check still gates the initial lock. (Both blocks share
+    // `feedFrame`: the gesture guard freezes the whole selection advance,
+    // tracker included.)
     if (feedFrame) {
       const advance = advanceSelection(this.selection, {
         valid: wasActive ? this.tracker.state !== "lost" : usable,
-        hasCorners,
+        // While locked, "the window has corners" is a property of the tracker
+        // — it holds all four slots through partial detection — not of this
+        // frame's detection, so a one-hand frame is not a dropout. Recapture
+        // during RELEASING still needs a real four-corner detection, because
+        // the tracker was reset when the window deactivated.
+        hasCorners: hasCorners || (wasActive && windowCorners.length === 4),
       });
       this.selection = advance.state;
 
@@ -760,6 +770,9 @@ export class HandFrameEngine {
       frameActive: active,
       selectionPhase: this.selection.phase,
       missedFrames: this.tracker.missedFrames,
+      trackState: this.tracker.state,
+      anchorMissed: this.tracker.slotMissedFrames,
+      handReasons: detection.gestures.map((g) => (g.ok ? "ok" : g.reason)),
       region: this.regionLock,
       regionTransform,
       faceAlign: active ? this.faceAlign : null,

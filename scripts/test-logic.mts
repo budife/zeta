@@ -339,11 +339,13 @@ console.log("\n[8] sticky tracker snaps, then eases toward the target");
   );
   check("reset snaps again", afterReset.every((p) => Math.abs(p.y) < 0.001 || Math.abs(p.y - 100) < 0.001), JSON.stringify(afterReset));
 
-  // A short/degenerate input is a MISS, not a passthrough that corrupts the
-  // window: the spec forbids `corners = []` on a single bad frame.
+  // A short feed is now a PARTIAL feed, not a miss: the two anchors update
+  // their slots and the other two hold. Only a frame with no anchors at all
+  // runs the release clock.
   const bad = t.update([{ x: 0, y: 0 }, { x: 1, y: 1 }], 0.016);
-  check("degenerate input keeps the last window", bad.length === 4, JSON.stringify(bad));
-  check("missed increments", t.missedFrames === 1, `${t.missedFrames}`);
+  check("partial feed keeps a four-corner window", bad.length === 4, JSON.stringify(bad));
+  check("partial feed is not a full miss", t.missedFrames === 0, `${t.missedFrames}`);
+  check("the unfed slots count their blindness", t.slotMissedFrames.filter((m) => m > 0).length === 2, JSON.stringify(t.slotMissedFrames));
   check("state degrades to holding", t.state === "holding", t.state);
 }
 
@@ -1175,11 +1177,11 @@ console.log("\n[29] sticky lock end-to-end — acquire, lock, dropout, release")
     const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = hasCorners && validity.valid;
-    tracker.update(usable ? det.corners : null, 0.016);
+    tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
     if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
     const advance = advanceSelection(selection, {
       valid: wasActive ? tracker.state !== "lost" : usable,
-      hasCorners,
+      hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
     });
     selection = advance.state;
     if (advance.deactivated) tracker.reset();
@@ -1355,11 +1357,11 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const hasCorners = det.corners.length === 4;
     const usable = frameEnabled && hasCorners && validity.valid;
     if (frameEnabled) {
-      tracker.update(usable ? det.corners : null, 0.016);
+      tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
       if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
       const advance = advanceSelection(selection, {
         valid: wasActive ? tracker.state !== "lost" : usable,
-        hasCorners,
+        hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
       });
       selection = advance.state;
       if (advance.deactivated) tracker.reset();
@@ -1439,11 +1441,11 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const hasCorners = det.corners.length === 4;
     const usable = feedFrame && hasCorners && validity.valid;
     if (feedFrame) {
-      tracker.update(usable ? det.corners : null, 0.016);
+      tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
       if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
       const advance = advanceSelection(selection, {
         valid: wasActive ? tracker.state !== "lost" : usable,
-        hasCorners,
+        hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
       });
       selection = advance.state;
       if (advance.deactivated) tracker.reset();
@@ -2629,6 +2631,200 @@ console.log(
   // Real tracking loss still releases the frame.
   for (let i = 0; i < 20; i++) step([]);
   check("engine replica: genuine loss releases", !selectionIsActive(selection.phase));
+}
+
+console.log(
+  "\n[43] locked tracking survives a degraded or lost hand (edge-to-edge stretch)"
+);
+{
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  const handA = hand({ x: 340, y: 200 }, { x: 600, y: 200 }, 70);
+  const handB = hand({ x: 940, y: 520 }, { x: 680, y: 520 }, 70);
+  const both = [toNorm(handA), toNorm(handB)];
+
+  // A hand whose pinky tip MediaPipe extrapolated toward the image border: the
+  // whole-hand reach check rejects it, but its two anchors are still real.
+  const degradedB = handB.map((p) => ({ ...p }));
+  degradedB[20] = { x: handB[0].x + 2000, y: handB[0].y, z: 0 };
+  const degraded = [toNorm(handA), toNorm(degradedB)];
+
+  // --- detectHandFrame: intent at lock, anchors after lock ---
+
+  check(
+    "acquire: two good hands give four corners",
+    detectHandFrame(both, W, H, "acquire").corners.length === 4
+  );
+  check(
+    "acquire: a degraded hand is rejected outright",
+    detectHandFrame(degraded, W, H, "acquire").corners.length === 0,
+    detectHandFrame(degraded, W, H, "acquire").reason
+  );
+  const detTrack = detectHandFrame(degraded, W, H, "track");
+  check(
+    "track: the degraded hand still carries its anchors",
+    detTrack.corners.length === 4,
+    detTrack.gestures.map((g) => g.reason).join(",")
+  );
+  check(
+    "track: the verdict records the fallback",
+    detTrack.gestures[1].reason.startsWith("anchor-fallback:"),
+    detTrack.gestures[1].reason
+  );
+
+  // A hand whose projected palm shrank below the px floor (foreshortened at
+  // the edge): the classifier drops it, the anchors stay usable.
+  const tiny = hand({ x: 600, y: 350 }, { x: 620, y: 350 }, 3);
+  check(
+    "acquire: tiny palm rejected",
+    detectHandFrame([toNorm(tiny)], W, H, "acquire").corners.length === 0
+  );
+  check(
+    "track: tiny palm still yields its anchors",
+    detectHandFrame([toNorm(tiny)], W, H, "track").corners.length === 2
+  );
+
+  // One hand gone entirely: tracking continues with two corners, not zero.
+  check(
+    "track: one hand yields two corners",
+    detectHandFrame([toNorm(handA)], W, H, "track").corners.length === 2
+  );
+  check(
+    "acquire: one hand yields nothing",
+    detectHandFrame([toNorm(handA)], W, H, "acquire").corners.length === 0
+  );
+
+  // --- StickyFrameTracker: four independent slots ---
+
+  const t = new StickyFrameTracker();
+  const base = [
+    { x: 340, y: 200 },
+    { x: 600, y: 200 },
+    { x: 940, y: 520 },
+    { x: 680, y: 520 },
+  ];
+  t.update(base, 0.016);
+
+  // Only hand A's anchors arrive — hand B is lost at the edge.
+  const partial = t.update([base[0], base[1]], 0.016);
+  check("partial feed keeps a four-corner window", partial.length === 4, JSON.stringify(partial));
+  check(
+    "fed slots stay on their anchors",
+    dist(partial[0], base[0]) < 5 && dist(partial[1], base[1]) < 5
+  );
+  check(
+    "blind slots hold their last known position",
+    dist(partial[2], base[2]) < 5 && dist(partial[3], base[3]) < 5
+  );
+  check(
+    "blindness is counted per anchor",
+    t.slotMissedFrames.filter((m) => m > 0).length === 2,
+    JSON.stringify(t.slotMissedFrames)
+  );
+  check("a partial feed is not a full miss", t.missedFrames === 0, `${t.missedFrames}`);
+  check("state is holding, not lost", t.state === "holding", t.state);
+
+  // Hand A moves while hand B is gone: A's slots follow, B's slots hold.
+  const before = (t.value ?? []).map((p) => ({ ...p }));
+  const movedA = [{ x: 340, y: 500 }, { x: 700, y: 100 }];
+  for (let i = 0; i < 20; i++) t.update(movedA, 0.016);
+  const win = t.value ?? [];
+  const moved = win.filter((c, i) => dist(c, before[i]) > 5);
+  const held = win.filter((c, i) => dist(c, before[i]) <= 5);
+  check("the surviving hand moves two slots", moved.length === 2, `${moved.length}`);
+  check("the lost hand's two slots hold exactly", held.length === 2, `${held.length}`);
+  check(
+    "the moving slots sit on the live anchors",
+    moved.length === 2 &&
+      moved.every((c) => Math.min(dist(c, movedA[0]), dist(c, movedA[1])) < 60),
+    JSON.stringify(moved)
+  );
+  check(
+    "the held slots stay at the last known anchors",
+    held.length === 2 && held.every((c) => base.some((b) => dist(c, b) < 30)),
+    JSON.stringify(held)
+  );
+
+  // Both hands return: every slot resumes, blindness reset.
+  t.update([movedA[0], movedA[1], base[2], base[3]], 0.016);
+  check(
+    "resume clears the blindness",
+    t.slotMissedFrames.every((m) => m === 0),
+    JSON.stringify(t.slotMissedFrames)
+  );
+  check("state is tracking again", t.state === "tracking", t.state);
+
+  // Total blindness — both hands gone — still loses the window, last shape held.
+  for (let i = 0; i < 12; i++) t.update(null, 0.016);
+  check("total blindness loses the window", t.state === "lost", t.state);
+  check("lost holds the last shape", (t.value ?? []).length === 4);
+
+  // --- engine replica: the reported bug, end to end ---
+  // Mirrors lib/engine.ts tick with the two-tier feed and the per-slot release.
+  {
+    const tracker = new StickyFrameTracker();
+    let selection = INITIAL_SELECTION;
+    const step = (landmarks) => {
+      const wasActive = selectionIsActive(selection.phase);
+      const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
+      const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
+      const hasCorners = det.corners.length === 4;
+      const usable = hasCorners && validity.valid;
+      tracker.update(
+        usable || (wasActive && det.corners.length > 0) ? det.corners : null,
+        0.016
+      );
+      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      const advance = advanceSelection(selection, {
+        valid: wasActive ? tracker.state !== "lost" : usable,
+        hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
+      });
+      selection = advance.state;
+      if (advance.deactivated) tracker.reset();
+      return tracker.value;
+    };
+    for (let i = 0; i < 3; i++) step(both);
+    check("engine replica: locks on the two-hand gesture", selectionIsActive(selection.phase));
+
+    // The right hand degrades at the edge — MediaPipe still sees it, the
+    // classifier does not. The frame must not even notice.
+    for (let i = 0; i < 10; i++) step(degraded);
+    check("engine replica: a degraded hand keeps the lock", selectionIsActive(selection.phase));
+    check(
+      "engine replica: all four anchors still tracked",
+      (tracker.value ?? []).length === 4
+    );
+
+    // The right hand is gone entirely; the left hand keeps moving.
+    const handAMoved = hand({ x: 740, y: 300 }, { x: 1000, y: 300 }, 70);
+    const before = (tracker.value ?? []).map((p) => ({ ...p }));
+    for (let i = 0; i < 20; i++) step([toNorm(handAMoved)]);
+    check(
+      "engine replica: one-hand loss keeps the lock",
+      selectionIsActive(selection.phase),
+      selection.phase
+    );
+    const eWin = tracker.value ?? [];
+    const moved = eWin.filter((c, i) => dist(c, before[i]) > 5);
+    const held = eWin.filter((c, i) => dist(c, before[i]) <= 5);
+    const aTips = [{ x: 740, y: 300 }, { x: 1000, y: 300 }];
+    check("engine replica: two slots followed the surviving hand", moved.length === 2, `${moved.length}`);
+    check("engine replica: two slots held exactly", held.length === 2, `${held.length}`);
+    check(
+      "engine replica: the moving slots sit on the live anchors",
+      moved.every((c) => Math.min(dist(c, aTips[0]), dist(c, aTips[1])) < 60),
+      JSON.stringify(moved)
+    );
+
+    // Both hands gone: the frame releases — the escape is the swipe-left reset,
+    // not a one-hand dropout.
+    for (let i = 0; i < 25; i++) step([]);
+    check(
+      "engine replica: total loss releases the frame",
+      !selectionIsActive(selection.phase),
+      selection.phase
+    );
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

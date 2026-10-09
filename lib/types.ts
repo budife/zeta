@@ -189,6 +189,26 @@ export type Snapshot = {
    */
   missedFrames: number;
   /**
+   * The window tracker's state this frame: "tracking" (all four slots saw a
+   * fresh anchor), "holding" (one hand's slots are blind and held, the rest
+   * still following) or "lost" (every slot blind past the budget). Debug
+   * readout — it pinpoints which side of a partial detection the frame is on.
+   */
+  trackState: import("./frameTracker").TrackState;
+  /**
+   * Per-slot blind counters (thumb/index per hand, in slot order). Debug
+   * readout — the pair that counts up is the hand the tracker is holding.
+   */
+  anchorMissed: number[];
+  /**
+   * Per-hand gesture verdict reasons, raw: "ok", a rejection reason
+   * (MediaPipe still sees the hand but the classifier refused it), or
+   * "anchor-fallback:<why>" (the hand degraded to its two fingertips and is
+   * still carrying the window). Debug readout that separates MediaPipe loss
+   * from gesture rejection at a glance.
+   */
+  handReasons: string[];
+  /**
    * Which body part the hand-made window is framing. `kind` is null while the
    * frame is inactive or the classifier is not confident enough — the renderer
    * then falls back to plain full-screen clipping.

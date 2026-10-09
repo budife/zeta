@@ -223,6 +223,22 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
             <dd>{stats ? `${stats.missedFrames}/${TRACK_CONFIG.maxMissedFrames}` : "—"}</dd>
           </div>
           <div>
+            <dt>Track</dt>
+            <dd>
+              {stats
+                ? `${stats.trackState} · slots ${stats.anchorMissed.join("/")}`
+                : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt>Hand reasons</dt>
+            <dd>
+              {stats && stats.handReasons.length
+                ? stats.handReasons.join(" | ")
+                : "—"}
+            </dd>
+          </div>
+          <div>
             <dt>State</dt>
             <dd>{stats ? stats.reason : "—"}</dd>
           </div>
