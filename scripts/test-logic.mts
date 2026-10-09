@@ -1172,7 +1172,7 @@ console.log("\n[29] sticky lock end-to-end — acquire, lock, dropout, release")
   const step = (landmarks) => {
     const wasActive = selectionIsActive(selection.phase);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H);
+    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = hasCorners && validity.valid;
     tracker.update(usable ? det.corners : null, 0.016);
@@ -1351,7 +1351,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const wasActive = selectionIsActive(selection.phase);
     const frameEnabled = handFrameAllowed(modeNow);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H);
+    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = frameEnabled && hasCorners && validity.valid;
     if (frameEnabled) {
@@ -1435,7 +1435,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const frameEnabled = handFrameAllowed(modeNow);
     const feedFrame = frameEnabled && !(modeNow === "FRAME_LOCKED" && sw.gestureHeld);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H);
+    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = feedFrame && hasCorners && validity.valid;
     if (feedFrame) {
@@ -2470,6 +2470,165 @@ console.log(
       COMIC_LINES_TIMING.activeMs > 0,
     JSON.stringify(COMIC_LINES_TIMING)
   );
+}
+
+console.log(
+  "\n[42] tracking validity vs acquisition validity — no artificial drag limits"
+);
+{
+  const W = 1280,
+    H = 720;
+
+  // A LOCKED frame must follow the hands with no size, aspect or viewport
+  // ceiling. Oversized: bigger than the whole video, corners far off-screen.
+  const huge = [
+    { x: -400, y: -300 },
+    { x: 1600, y: -200 },
+    { x: 1700, y: 1000 },
+    { x: -300, y: 900 },
+  ];
+  const tHuge = isValidQuad(huge, W, H, "track");
+  check("track: oversized off-viewport quad stays valid", tHuge.valid, tHuge.reason);
+
+  // Extreme aspect (~12:1) — an unusual shape, but still a renderable window.
+  const wide = [
+    { x: 20, y: 340 },
+    { x: 1260, y: 350 },
+    { x: 1260, y: 380 },
+    { x: 20, y: 370 },
+  ];
+  const tWide = isValidQuad(wide, W, H, "track");
+  check("track: extreme aspect ratio stays valid", tWide.valid, tWide.reason);
+
+  // Small but genuinely usable (60x60) — below the acquire floor, fine to track.
+  const small = [
+    { x: 600, y: 320 },
+    { x: 660, y: 320 },
+    { x: 660, y: 380 },
+    { x: 600, y: 380 },
+  ];
+  const tSmall = isValidQuad(small, W, H, "track");
+  check("track: small window below the acquire floor stays valid", tSmall.valid, tSmall.reason);
+
+  // Acquisition still floors noise: a speck or a slit must not be able to lock.
+  check("acquire: tiny quad still rejected", !isValidQuad(small, W, H, "acquire").valid);
+  check("acquire: extreme aspect still rejected", !isValidQuad(wide, W, H, "acquire").valid);
+
+  // Degenerate geometry is rejected in BOTH modes — the numerical safeguards stay.
+  const collapsed = [
+    { x: 640, y: 360 },
+    { x: 641, y: 360 },
+    { x: 640, y: 361 },
+    { x: 641, y: 361 },
+  ];
+  check(
+    "track: near-zero-area collapse still rejected",
+    !isValidQuad(collapsed, W, H, "track").valid
+  );
+
+  const slit = [
+    { x: 100, y: 358 },
+    { x: 1180, y: 359 },
+    { x: 1180, y: 360 },
+    { x: 100, y: 361 },
+  ];
+  check("track: 2px-tall slit still rejected", !isValidQuad(slit, W, H, "track").valid);
+
+  const nan = [
+    { x: 300, y: 200 },
+    { x: NaN, y: 200 },
+    { x: 900, y: 520 },
+    { x: 300, y: 520 },
+  ];
+  check("track: NaN coordinates rejected", !isValidQuad(nan, W, H, "track").valid);
+  check("acquire: NaN coordinates rejected", !isValidQuad(nan, W, H, "acquire").valid);
+
+  const inf = [
+    { x: 300, y: 200 },
+    { x: 900, y: 200 },
+    { x: 900, y: 520 },
+    { x: -Infinity, y: 520 },
+  ];
+  check("track: Infinity coordinates rejected", !isValidQuad(inf, W, H, "track").valid);
+
+  const bowtie = [
+    { x: 300, y: 200 },
+    { x: 900, y: 520 },
+    { x: 900, y: 200 },
+    { x: 300, y: 520 },
+  ];
+  const tBow = isValidQuad(bowtie, W, H, "track");
+  check("track: bowtie still rejected", !tBow.valid, tBow.reason);
+
+  // Engine-level replica: while LOCKED, expanding or shrinking continuously
+  // must keep feeding the tracker — only genuine tracking loss may release it.
+  const tracker = new StickyFrameTracker();
+  let selection = INITIAL_SELECTION;
+  const step = (corners) => {
+    const wasActive = selectionIsActive(selection.phase);
+    const validity = isValidQuad(corners, W, H, wasActive ? "track" : "acquire");
+    const usable = corners.length === 4 && validity.valid;
+    tracker.update(usable ? corners : null, 0.016);
+    const advance = advanceSelection(selection, {
+      valid: wasActive ? tracker.state !== "lost" : usable,
+      hasCorners: corners.length === 4,
+    });
+    selection = advance.state;
+    if (advance.deactivated) tracker.reset();
+    return tracker.value;
+  };
+  const lock = [
+    { x: 340, y: 200 },
+    { x: 940, y: 200 },
+    { x: 940, y: 520 },
+    { x: 340, y: 520 },
+  ];
+  for (let i = 0; i < 3; i++) step(lock);
+  check("engine replica: locks on a normal frame", selectionIsActive(selection.phase));
+
+  const bboxArea = (corners) => {
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+    for (const p of corners) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    return (maxX - minX) * (maxY - minY);
+  };
+
+  // TEST 1 (expand): the window grows past the whole video and stays locked.
+  for (let i = 0; i < 40; i++) {
+    const k = 1 + i * 0.08;
+    step(lock.map((c) => ({ x: 640 + (c.x - 640) * k, y: 360 + (c.y - 360) * k })));
+  }
+  check("engine replica: expansion never releases", selectionIsActive(selection.phase));
+  const grew = bboxArea(tracker.value ?? []);
+  check(
+    "engine replica: window grew past the whole video",
+    grew > W * H,
+    Math.round(grew).toString()
+  );
+
+  // TEST 2 (shrink): the window shrinks below the acquire floor and stays locked.
+  for (let i = 0; i < 60; i++) {
+    const k = Math.max(0.22, 1 - i * 0.02);
+    step(lock.map((c) => ({ x: 640 + (c.x - 640) * k, y: 360 + (c.y - 360) * k })));
+  }
+  check("engine replica: shrink never releases", selectionIsActive(selection.phase));
+  const shrank = bboxArea(tracker.value ?? []);
+  check(
+    "engine replica: window shrank below the acquire floor",
+    shrank > 0 && shrank < 0.035 * W * H,
+    Math.round(shrank).toString()
+  );
+
+  // Real tracking loss still releases the frame.
+  for (let i = 0; i < 20; i++) step([]);
+  check("engine replica: genuine loss releases", !selectionIsActive(selection.phase));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

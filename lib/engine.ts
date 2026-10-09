@@ -583,7 +583,16 @@ export class HandFrameEngine {
       wasActive ? "track" : "acquire"
     );
     const rawFrame = calculateFrame(detection.corners);
-    const validity = isValidQuad(detection.corners, width, height);
+    // Two tiers, mirroring detectHandFrame: while still acquiring, the quad
+    // must enclose a real window before it may lock; once locked, only
+    // genuinely degenerate geometry fails, so the frame keeps following the
+    // hands at any size, tilt or skew — even past the stage edge.
+    const validity = isValidQuad(
+      detection.corners,
+      width,
+      height,
+      wasActive ? "track" : "acquire"
+    );
     const hasCorners = detection.corners.length === 4;
     const usable = feedFrame && hasCorners && validity.valid;
 

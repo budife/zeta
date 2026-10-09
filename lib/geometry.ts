@@ -43,6 +43,16 @@ export const FRAME_CONFIG = {
    * zero-area sliver.
    */
   minWindowSide: 0.06,
+  /**
+   * Absolute floors below which a LOCKED window counts as genuinely degenerate
+   * (not merely small). Tracking keeps no minimum size, maximum size, aspect
+   * ceiling or viewport bound — the window may shrink, grow past the stage,
+   * tilt and skew freely, and the viewport clips it naturally — but a collapsed
+   * or razor-thin polygon cannot be rendered or aimed at, so tracking validity
+   * stops here. Absolute px, not a fraction: degeneracy is a rendering fact.
+   */
+  minDegenerateAreaPx: 16,
+  minDegenerateSidePx: 4,
   /** Every interior corner angle must lie inside this range (degrees). */
   minCornerAngle: 40,
   maxCornerAngle: 140,

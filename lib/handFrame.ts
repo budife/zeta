@@ -256,22 +256,44 @@ export function isValidFrame(
  *
  * Unlike `isValidFrame` (which fits an oriented rectangle and rejects anything
  * too far from it), this validates the raw quadrilateral the hands actually
- * form. The window may be a trapezoid, asymmetric, or tilted: as long as the
- * four corners enclose a single simple area that is big enough and not a
- * degenerate sliver, it is a valid window.
+ * form. The window may be a trapezoid, asymmetric, tilted, larger than the
+ * stage, or partly off-screen: as long as the four corners enclose a single
+ * simple area that is not degenerate, it is a valid window.
  *
- * Checks, all deliberately generous:
- *  - exactly four corners, none repeated;
+ * The strictness is split the same way the gesture check is (see
+ * `GestureMode`), because "can LOCK here" and "may TRACK there" need different
+ * answers — this is the tracking-validity / rendering-validity split:
+ *
+ *  - `acquire` (default, used while searching): the gesture must enclose a real
+ *    window before it may lock, so fractional area and side floors apply. They
+ *    are usability floors for locking, not drag limits.
+ *  - `track` (used once locked): no maximum size, no aspect ceiling, no
+ *    viewport bound. The window follows the hands wherever they go — past the
+ *    stage edge (the viewport clips it naturally), down to a small size, tilted
+ *    or skewed — and only *genuinely degenerate* geometry is rejected, so a
+ *    momentary misread holds instead of releasing the frame.
+ *
+ * Checks shared by both modes:
+ *  - exactly four corners, every coordinate finite (NaN/Infinity poison the
+ *    clip path and every downstream computation);
  *  - the polygon is simple (edges do not cross) and consistently wound;
- *  - the enclosed area is within the configured fraction of the video;
- *  - the corners are not nearly collinear (which would give a zero-area sliver).
+ *  - not a degenerate sliver or a collapsed polygon (mode-dependent floor).
  */
 export function isValidQuad(
   corners: Point[],
   width: number,
-  height: number
+  height: number,
+  mode: GestureMode = "acquire"
 ): FrameValidity {
   if (corners.length !== 4) return { valid: false, reason: "no-frame" };
+
+  // Numerical safeguard, checked first: non-finite coordinates would sail
+  // through every comparison below (NaN < x is false) and reach the clip path.
+  for (const p of corners) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+      return { valid: false, reason: "non-finite" };
+    }
+  }
 
   const total = width * height;
 
@@ -284,12 +306,6 @@ export function isValidQuad(
     signedArea += a.x * b.y - b.x * a.y;
   }
   const area = Math.abs(signedArea) / 2;
-  if (area < FRAME_CONFIG.minAreaFraction * total) {
-    return { valid: false, reason: "area-too-small" };
-  }
-  if (area > FRAME_CONFIG.maxAreaFraction * total) {
-    return { valid: false, reason: "area-too-large" };
-  }
 
   // Every corner must turn the same way (all left or all right). A sign flip
   // means a reflex angle or a crossing, i.e. not a simple quadrilateral.
@@ -305,9 +321,7 @@ export function isValidQuad(
     else if (sign !== winding) return { valid: false, reason: "not-simple-quad" };
   }
 
-  // Reject slivers: the smallest dimension of the axis-aligned bounding box
-  // must be a reasonable fraction of the video. A window can be tall or wide,
-  // but not a line.
+  // Axis-aligned bounding box — the basis for the sliver guards.
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const p of corners) {
     minX = Math.min(minX, p.x);
@@ -317,14 +331,25 @@ export function isValidQuad(
   }
   const bboxW = maxX - minX;
   const bboxH = maxY - minY;
-  const minSide = Math.min(bboxW, bboxH);
-  if (minSide < FRAME_CONFIG.minWindowSide * Math.min(width, height)) {
-    return { valid: false, reason: "too-narrow" };
-  }
-  const aspect = Math.max(bboxW, bboxH) / Math.max(minSide, 1);
-  if (aspect > FRAME_CONFIG.maxAspect) {
-    return { valid: false, reason: "too-narrow" };
+
+  if (mode === "acquire") {
+    if (area < FRAME_CONFIG.minAreaFraction * total) {
+      return { valid: false, reason: "area-too-small" };
+    }
+    if (Math.min(bboxW, bboxH) < FRAME_CONFIG.minWindowSide * Math.min(width, height)) {
+      return { valid: false, reason: "too-narrow" };
+    }
+    return { valid: true, reason: "ok" };
   }
 
+  // TRACK: only genuinely degenerate geometry is refused. No size ceiling, no
+  // aspect ceiling, no viewport bound — the window may extend past the stage
+  // (the viewport clips it naturally) and take any shape the hands form.
+  if (area < FRAME_CONFIG.minDegenerateAreaPx) {
+    return { valid: false, reason: "degenerate-area" };
+  }
+  if (Math.min(bboxW, bboxH) < FRAME_CONFIG.minDegenerateSidePx) {
+    return { valid: false, reason: "degenerate-sliver" };
+  }
   return { valid: true, reason: "ok" };
 }
