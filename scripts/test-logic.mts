@@ -3,6 +3,7 @@
  * Import paths are rewritten at run time, so keep them as `../lib/<name>`.
  */
 import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../lib/handFrame";
+import { mediaKindFromSource } from "../lib/media";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import { HandFrameEngine } from "../lib/engine";
@@ -2825,6 +2826,24 @@ console.log(
       selection.phase
     );
   }
+}
+
+console.log("\n[44] media source kind — uploaded blob videos use MIME type");
+{
+  check("svg asset is an image", mediaKindFromSource("/vectors/template.svg") === "image");
+  check("mp4 path is a video", mediaKindFromSource("/demo/clip.mp4") === "video");
+  check(
+    "blob upload with video MIME is a video even without extension",
+    mediaKindFromSource("blob:https://local/session", "video/webm") === "video"
+  );
+  check(
+    "blob upload with image MIME is an image",
+    mediaKindFromSource("blob:https://local/session", "image/png") === "image"
+  );
+  check(
+    "unknown blob MIME safely defaults to image",
+    mediaKindFromSource("blob:https://local/session", "application/octet-stream") === "image"
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

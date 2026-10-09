@@ -21,6 +21,7 @@ export default function HomePage() {
   // template path itself is derived from the engine's menu pick. Object URLs
   // are released on replace/unmount (the [media] effect below).
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [uploadedMime, setUploadedMime] = useState<string | null>(null);
   // Match the stage to the real camera frame so overlays stay aligned even for
   // 4:3 or square sensors (object-fit would otherwise crop the picture).
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
@@ -80,6 +81,7 @@ export default function HomePage() {
       const file = event.target.files?.[0];
       if (!file) return;
       setUploaded(URL.createObjectURL(file));
+      setUploadedMime(file.type || null);
       // The upload row's pick: contentMode becomes "template" with the
       // uploaded asset on top (media derives uploaded over status.template).
       // Dispatched DIRECTLY so handleMenuEvent's "a template pick supersedes
@@ -93,6 +95,7 @@ export default function HomePage() {
 
   const handleResetMedia = useCallback(() => {
     setUploaded(null);
+    setUploadedMime(null);
     // "Use Template" also means: make template.svg the selected template.
     handleModeEvent({ type: "itemSelected", item: { kind: "template", id: "template" } });
   }, [handleModeEvent]);
@@ -108,6 +111,7 @@ export default function HomePage() {
         event.item.id !== "upload"
       ) {
         setUploaded(null);
+        setUploadedMime(null);
       }
       handleModeEvent(event);
     },
@@ -153,6 +157,7 @@ export default function HomePage() {
               subscribe={subscribeSnapshot}
               contentMode={status.contentMode}
               src={media}
+              srcMimeType={media === uploaded ? uploadedMime : null}
               faceAlignEnabled={media === DEFAULT_MEDIA}
               effect={status.effect}
               blurLevel={blurLevel}

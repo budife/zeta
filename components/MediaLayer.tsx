@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { clipPathPolygon, mediaMatrix, MIRROR_TRANSFORM } from "@/lib/stage";
 import { motionClass, type BlurLevel } from "@/lib/effects";
 import { EffectEngine } from "@/lib/effectEngine";
+import { mediaKindFromSource } from "@/lib/media";
 import type { Snapshot } from "@/lib/types";
 import type { MenuPick } from "@/lib/modes";
 
@@ -22,6 +23,8 @@ export type MediaLayerProps = {
   contentMode: MenuPick["kind"] | null;
   /** Template/upload asset path — only rendered while contentMode is "template". */
   src: string | null;
+  /** MIME type for uploaded blob URLs; asset paths can infer from extension. */
+  srcMimeType?: string | null;
   /**
    * Apply face→template alignment (lib/faceAlignment). Only valid for the
    * bundled template whose face anchors are configured in templateRegions —
@@ -68,6 +71,7 @@ export function MediaLayer({
   subscribe,
   contentMode,
   src,
+  srcMimeType = null,
   faceAlignEnabled = true,
   effect = null,
   blurLevel = "medium",
@@ -106,8 +110,8 @@ export function MediaLayer({
   }, [effectCanvas, blurLevel]);
 
   useEffect(() => {
-    setIsVideo(src ? /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(src) : false);
-  }, [src]);
+    setIsVideo(mediaKindFromSource(src, srcMimeType) === "video");
+  }, [src, srcMimeType]);
 
   useEffect(() => {
     if (!isVideo || !src) return;
