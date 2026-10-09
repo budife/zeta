@@ -8,6 +8,7 @@ import { MediaLayer } from "@/components/MediaLayer";
 import { StatusPanel } from "@/components/StatusPanel";
 import { useHandFrameEngine } from "@/hooks/useHandFrameEngine";
 import { MainMenu } from "@/components/MainMenu";
+import { nextBlurLevel, type BlurLevel } from "@/lib/effects";
 import type { ModeEvent } from "@/lib/modes";
 
 /** Default media shown through the hand-made window. */
@@ -23,6 +24,13 @@ export default function HomePage() {
   // Match the stage to the real camera frame so overlays stay aligned even for
   // 4:3 or square sensors (object-fit would otherwise crop the picture).
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  // Blur intensity (soft/medium/strong) while the blur effect is live —
+  // local UI state; the engine picks it up through MediaLayer's prop.
+  const [blurLevel, setBlurLevel] = useState<BlurLevel>("medium");
+
+  const handleBlurLevel = useCallback(() => {
+    setBlurLevel((current) => nextBlurLevel(current));
+  }, []);
 
   const {
     status,
@@ -147,6 +155,7 @@ export default function HomePage() {
               src={media}
               faceAlignEnabled={media === DEFAULT_MEDIA}
               effect={status.effect}
+              blurLevel={blurLevel}
               motion={status.motion}
               cameraVideoRef={videoRef}
             />
@@ -193,6 +202,12 @@ export default function HomePage() {
                   the way back to TEMPLATE). */}
               {media !== null && media !== DEFAULT_MEDIA && (
                 <button type="button" className="ghost-button ghost-button--subtle" onClick={handleResetMedia}>Use Template</button>
+              )}
+              {/* Blur intensity cycle — only while the blur effect is live. */}
+              {status.contentMode === "effect" && status.effect === "blur" && (
+                <button type="button" className="ghost-button" onClick={handleBlurLevel}>
+                  Blur: {blurLevel[0].toUpperCase() + blurLevel.slice(1)}
+                </button>
               )}
               <span className="media-controls__name">
                 {media === null ? "" : media.startsWith("blob:") ? "uploaded" : media.split("/").pop()}

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { clipPathPolygon, mediaMatrix, MIRROR_TRANSFORM } from "@/lib/stage";
-import { effectClass, motionClass } from "@/lib/effects";
+import { motionClass, type BlurLevel } from "@/lib/effects";
+import { EffectEngine } from "@/lib/effectEngine";
 import type { Snapshot } from "@/lib/types";
 import type { MenuPick } from "@/lib/modes";
 
@@ -13,7 +14,8 @@ export type MediaLayerProps = {
    * mutually exclusive modes). Decides WHAT renders inside the window:
    *
    *   template → the asset (src) behind the mirror∘align matrix
-   *   effect   → the fx overlay only; the camera shows through untouched
+   *   effect   → a canvas processing the REAL camera pixels (blur, particles,
+   *              grading, glitch) — nothing overlays, the frame itself changes
    *   motion   → a camera copy inside an animated wrapper (the media moves)
    *   null     → nothing; raw camera through the window
    */
@@ -26,11 +28,13 @@ export type MediaLayerProps = {
    * uploaded media has unknown landmarks and must stay untransformed.
    */
   faceAlignEnabled?: boolean;
-  /** Live effect id — renders the overlay only while contentMode is "effect". */
+  /** Live effect id — runs the engine only while contentMode is "effect". */
   effect?: string | null;
+  /** Blur intensity while the blur effect is live (control row cycles it). */
+  blurLevel?: BlurLevel;
   /** Live motion id — animates the camera copy while contentMode is "motion". */
   motion?: string | null;
-  /** The live camera element; its stream is mirrored into the motion copy. */
+  /** The live camera element; effect mode samples it, motion mode mirrors it. */
   cameraVideoRef?: RefObject<HTMLVideoElement | null> | null;
 };
 
@@ -45,9 +49,8 @@ export type MediaLayerProps = {
  *       │   └── <img>/<video>   alignment)
  *       ├── MotionWrapper    (motion mode; animated full-size wrapper holding
  *       │   └── camera <video>  a mirrored copy of the live camera)
- *       └── FxOverlay        (effect mode; sibling AFTER the others, clipped
- *                             with the window so effects only touch what
- *                             shows through it)
+ *       └── EffectCanvas     (effect mode; processed-camera canvas, never
+ *           └── <canvas>        transformed — the clip stays the only cut)
  *
  * Exactly one of the three renders per contentMode — the mutual-exclusion
  * rule is what keeps the window showing camera+effect in effect mode (no
@@ -67,6 +70,7 @@ export function MediaLayer({
   src,
   faceAlignEnabled = true,
   effect = null,
+  blurLevel = "medium",
   motion = null,
   cameraVideoRef = null,
 }: MediaLayerProps) {
@@ -74,11 +78,32 @@ export function MediaLayer({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const motionVideoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const engineRef = useRef<EffectEngine | null>(null);
   const [isVideo, setIsVideo] = useState(false);
 
   // Render gates: each mode owns exactly one layer (mutual exclusion).
-  const fxClass = contentMode === "effect" && effect ? effectClass(effect) : "";
+  const effectCanvas = contentMode === "effect" && effect ? effect : null;
   const motionCss = contentMode === "motion" && motion ? motionClass(motion) : "";
+
+  // Effect engine lifecycle: one engine per (effect id, blur level). Its
+  // presence doubles as the render gate inside the snapshot callback, so the
+  // callback needs no contentMode/effect deps and never re-subscribes.
+  useEffect(() => {
+    if (!effectCanvas) {
+      engineRef.current?.dispose();
+      engineRef.current = null;
+      return;
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const engine = new EffectEngine(canvas, effectCanvas, blurLevel);
+    engineRef.current = engine;
+    return () => {
+      engine.dispose();
+      if (engineRef.current === engine) engineRef.current = null;
+    };
+  }, [effectCanvas, blurLevel]);
 
   useEffect(() => {
     setIsVideo(src ? /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(src) : false);
@@ -122,6 +147,32 @@ export function MediaLayer({
         copy.play().catch(() => {
           /* muted copy: autoplay is allowed; ignore late rejections */
         });
+      }
+
+      // ---- effect canvas: process the live camera inside the window ----
+      // Runs BEFORE the template-only transform block below: in effect mode
+      // contentRef is absent, so anything placed after those guards would
+      // never execute.
+      const engine = engineRef.current;
+      if (engine) {
+        if (
+          camera &&
+          camera.videoWidth > 0 &&
+          frameActive &&
+          windowCorners.length === 4
+        ) {
+          engine.render({
+            video: camera,
+            width: clip.clientWidth,
+            height: clip.clientHeight,
+            videoWidth,
+            videoHeight,
+            corners: windowCorners,
+            now: performance.now(),
+          });
+        } else {
+          engine.clear();
+        }
       }
 
       // ---- media transform (template mode only; the element may be absent) ----
@@ -181,7 +232,7 @@ export function MediaLayer({
             />
           </div>
         )}
-        {fxClass && <div className={`media-layer__fx ${fxClass}`} />}
+        {effectCanvas && <canvas ref={canvasRef} className="media-layer__effect" />}
       </div>
     </div>
   );

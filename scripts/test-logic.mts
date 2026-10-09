@@ -10,10 +10,11 @@ import {
   BLUR_LEVELS,
   BLUR_TUNING,
   EFFECT_TUNING,
-  effectClass,
   effectParams,
   motionClass,
+  nextBlurLevel,
   nextEffect,
+  scaledPx,
 } from "../lib/effects";
 import {
   createRainParticle,
@@ -1912,21 +1913,8 @@ console.log("[34] menu structure, stage layout, hit-test, engine recording (Slic
   eng.dispose();
 }
 
-console.log("\n[35] appearance — effect/motion render classes and effect cycling (Slice E)");
+console.log("\n[35] appearance — motion classes, effect cycling, blur level cycle");
 {
-  const effectExpect: Array<[string, string]> = [
-    ["blur", "fx--blur"],
-    ["rain", "fx--rain"],
-    ["snow", "fx--snow"],
-    ["cyberpunk", "fx--cyberpunk"],
-    ["glitch", "fx--glitch"],
-  ];
-  for (const [id, cls] of effectExpect) {
-    check(`effect "${id}" renders as ${cls}`, effectClass(id) === cls, effectClass(id));
-  }
-  check('effect "none" renders nothing', effectClass("none") === "", JSON.stringify(effectClass("none")));
-  check("unknown effect renders nothing", effectClass("shaders") === "", effectClass("shaders"));
-
   const motionExpect: Array<[string, string]> = [
     ["shake", "motion--shake"],
     ["float", "motion--float"],
@@ -1944,6 +1932,12 @@ console.log("\n[35] appearance — effect/motion render classes and effect cycli
   check("next effect wraps glitch back to blur", nextEffect("glitch") === "blur", nextEffect("glitch"));
   check("unknown effect restarts the cycle at blur", nextEffect("wat") === "blur", nextEffect("wat"));
   check("no content (null) starts the cycle at blur", nextEffect(null) === "blur", String(nextEffect(null)));
+
+  // The canvas pipeline renders blur at three intensities; the control row
+  // cycles them in menu order and wraps.
+  check("blur level cycles soft → medium", nextBlurLevel("soft") === "medium", nextBlurLevel("soft"));
+  check("blur level cycles medium → strong", nextBlurLevel("medium") === "strong", nextBlurLevel("medium"));
+  check("blur level wraps strong → soft", nextBlurLevel("strong") === "soft", nextBlurLevel("strong"));
 }
 
 console.log("\n[36] pinch — thumb-index gesture and the double-pinch effect cycle (decision 1)");
@@ -2360,6 +2354,11 @@ console.log(
       effectParams("blur", "strong").blurQuality === "low",
     JSON.stringify(effectParams("blur", "strong"))
   );
+
+  // Tuned px values are stated at REFERENCE_WIDTH and scale with the stage.
+  check("scaledPx keeps the tuned value at reference width", scaledPx(14, 1280) === 14, String(scaledPx(14, 1280)));
+  check("scaledPx halves with the stage", scaledPx(14, 640) === 7, String(scaledPx(14, 640)));
+  check("scaledPx of 0 stays 0", scaledPx(0, 9999) === 0, String(scaledPx(0, 9999)));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

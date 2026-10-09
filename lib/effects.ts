@@ -1,27 +1,18 @@
 /**
- * Appearance mapping: a picked effect/motion id → the CSS hook that renders
- * it, plus the effect cycle the double-pinch gesture walks.
+ * Appearance mapping: effect/motion ids, their render tuning, and the cycles
+ * the UI walks.
  *
- * Deliberately dumb: every effect and motion is pure CSS (globals.css) — no
- * canvas, no per-frame JS — so this file only has to (a) whitelist ids so a
- * stray status value can never inject a class, and (b) keep the cycle order
- * identical to the menu's list. The renderers consume the classes:
+ *   motions stay pure CSS — motionClass() returns the .motion--* hook the
+ *     MediaLayer wrapper animates (globals.css)
+ *   effects are rendered on a canvas from REAL camera pixels
+ *     (lib/effectEngine.ts) — this file only whitelists ids and carries the
+ *     per-effect tuning, so a stray status value can never reach the renderer
  *
- *   effectClass → .media-layer__fx  (overlay inside the hand window)
- *   motionClass → .media-layer__motion (a full-size wrapper INSIDE the clip,
- *                                      so only the media moves — the window
- *                                      geometry never does)
+ * The cycle orders (nextEffect / nextBlurLevel) must stay identical to the
+ * menu's list.
  */
 
 import { EFFECT_ITEMS } from "./menuModel";
-
-const EFFECT_CLASSES: Record<string, string> = {
-  blur: "fx--blur",
-  rain: "fx--rain",
-  snow: "fx--snow",
-  cyberpunk: "fx--cyberpunk",
-  glitch: "fx--glitch",
-};
 
 const MOTION_CLASSES: Record<string, string> = {
   shake: "motion--shake",
@@ -30,11 +21,6 @@ const MOTION_CLASSES: Record<string, string> = {
   pulse: "motion--pulse",
   parallax: "motion--parallax",
 };
-
-/** CSS modifier for an effect id; "" (render nothing) for none/unknown. */
-export function effectClass(effect: string): string {
-  return EFFECT_CLASSES[effect] ?? "";
-}
 
 /** CSS modifier for a motion id; "" (render nothing) for none/unknown. */
 export function motionClass(motion: string): string {
@@ -117,4 +103,19 @@ export function effectParams(effect: string, level: BlurLevel = "medium"): Effec
       particleCount: 0,
     }
   );
+}
+
+/** The next blur intensity in menu order, wrapping (soft → medium → strong → soft). */
+export function nextBlurLevel(current: BlurLevel): BlurLevel {
+  const index = BLUR_LEVELS.indexOf(current);
+  return BLUR_LEVELS[(index + 1) % BLUR_LEVELS.length];
+}
+
+/**
+ * Converts a px value tuned at REFERENCE_WIDTH to the actual stage width, so
+ * blur radius, feather and stroke sizes look the same on a phone-sized stage
+ * and on a full-screen one.
+ */
+export function scaledPx(px: number, stageWidth: number): number {
+  return (px * stageWidth) / REFERENCE_WIDTH;
 }
