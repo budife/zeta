@@ -158,6 +158,20 @@ export function normBoxToVideo(
 }
 
 /**
+ * The window quadrilateral as stage fractions 0..1 (one point per corner),
+ * mirrored like every other overlay. This is the single geometry source: the
+ * CSS `clip-path` string and the effect canvas's feather mask are both built
+ * from these points, so they cannot drift apart.
+ */
+export function stagePolygonPoints(
+  corners: Point[],
+  videoWidth: number,
+  videoHeight: number
+): Point[] {
+  return corners.map((p) => toStageFraction(p, videoWidth, videoHeight));
+}
+
+/**
  * CSS `clip-path` polygon for the clipping window, in percentages of the
  * stage. The media layer fills the whole stage and is clipped to the
  * quadrilateral the hands form, so only the part of the media inside the
@@ -168,11 +182,8 @@ export function clipPathPolygon(
   videoWidth: number,
   videoHeight: number
 ): string {
-  return corners
-    .map((p) => {
-      const f = toStageFraction(p, videoWidth, videoHeight);
-      return `${(f.x * 100).toFixed(3)}% ${(f.y * 100).toFixed(3)}%`;
-    })
+  return stagePolygonPoints(corners, videoWidth, videoHeight)
+    .map((f) => `${(f.x * 100).toFixed(3)}% ${(f.y * 100).toFixed(3)}%`)
     .join(", ");
 }
 
@@ -310,4 +321,31 @@ export function mediaMatrix(
   const e = (align ? align.tx : 0) * k;
   const f = (align ? align.ty : 0) * k;
   return { a: -a, b, c: -c, d, e: stageWidth - e, f };
+}
+
+/**
+ * The same cover + mirror mapping as a canvas matrix (video px → stage px):
+ *
+ *   ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+ *   ctx.drawImage(video, 0, 0);
+ *
+ * draws the frame exactly where `object-fit: cover` plus the CSS mirror
+ * place it, so the effect canvas and the camera `<video>` cannot drift
+ * apart. The mirror is folded in here (x → stageWidth − x), the same one
+ * `MIRROR_PREVIEW` applies to every other overlay — one source of truth.
+ */
+export function cameraCoverTransform(
+  stageWidth: number,
+  stageHeight: number,
+  videoWidth: number,
+  videoHeight: number
+): CssMatrix {
+  if (videoWidth <= 0 || videoHeight <= 0) {
+    return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  }
+  const k = Math.max(stageWidth / videoWidth, stageHeight / videoHeight);
+  const offsetX = (stageWidth - videoWidth * k) / 2;
+  const offsetY = (stageHeight - videoHeight * k) / 2;
+  // Forward: x' = x·k + offsetX. Mirrored: x'' = stageWidth − x'.
+  return { a: -k, b: 0, c: 0, d: k, e: stageWidth - offsetX, f: offsetY };
 }

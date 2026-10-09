@@ -6,15 +6,31 @@ import { detectHandFrame, calculateFrame, isValidFrame, isValidQuad } from "../l
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
 import { HandFrameEngine } from "../lib/engine";
-import { effectClass, motionClass, nextEffect } from "../lib/effects";
+import {
+  BLUR_LEVELS,
+  BLUR_TUNING,
+  EFFECT_TUNING,
+  effectClass,
+  effectParams,
+  motionClass,
+  nextEffect,
+} from "../lib/effects";
+import {
+  createRainParticle,
+  createSnowParticle,
+  insetPolygon,
+  stepParticle,
+} from "../lib/effectEngine";
 import { PINCH_CONFIG, PinchCycleDetector, isPinched } from "../lib/pinch";
 import {
+  cameraCoverTransform,
   clipPathPolygon,
   mediaMatrix,
   MIRROR_PREVIEW,
   MIRROR_TRANSFORM,
   normBoxToVideo,
   normalizedToVideo,
+  stagePolygonPoints,
   toStageFraction,
   toStagePixels,
   windowToTemplateBox,
@@ -2137,6 +2153,213 @@ console.log("\n[38] live-row highlight — only the live category may show a che
     isLiveRow(row.kind, row.id, "TEMPLATE", null, { template: null, effect: null, motion: null })
   ).length;
   check("no content means no live row at all", freshCount === 0, String(freshCount));
+}
+
+console.log(
+  "\n[39] effect rendering helpers — stage polygon, cover matrix, feather inset, particles, tuning"
+);
+{
+  // ── one source for BOTH the clip-path string and the canvas feather mask ──
+  const corners = [
+    { x: 1280, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 720 },
+    { x: 1280, y: 720 },
+  ];
+  const pts = stagePolygonPoints(corners, W, H);
+  check("stagePolygonPoints returns one point per corner", pts.length === 4, String(pts.length));
+  check(
+    "stagePolygonPoints mirrors x like every other overlay",
+    pts[0].x === 0 && pts[0].y === 0 && pts[1].x === 1 && pts[1].y === 0 && pts[2].y === 1,
+    JSON.stringify(pts)
+  );
+  const fromPoints = pts
+    .map((p) => `${(p.x * 100).toFixed(3)}% ${(p.y * 100).toFixed(3)}%`)
+    .join(", ");
+  const css = clipPathPolygon(corners, W, H);
+  check("clipPathPolygon is built from stagePolygonPoints", css === fromPoints, css);
+  check("stagePolygonPoints of no corners is empty", stagePolygonPoints([], W, H).length === 0);
+
+  // ── cover + mirror as ONE canvas matrix (video px → stage px) ──
+  const apply = (
+    m: { a: number; b: number; c: number; d: number; e: number; f: number },
+    x: number,
+    y: number
+  ) => ({ x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f });
+  const approx = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+
+  const exact = cameraCoverTransform(1280, 720, 640, 360);
+  const e0 = apply(exact, 0, 0);
+  const e1 = apply(exact, 640, 360);
+  check(
+    "cover+mirror maps video left-top to stage right-top",
+    approx(e0.x, 1280) && approx(e0.y, 0),
+    JSON.stringify(e0)
+  );
+  check(
+    "cover+mirror maps video right-bottom to stage left-bottom",
+    approx(e1.x, 0) && approx(e1.y, 720),
+    JSON.stringify(e1)
+  );
+
+  const crop = cameraCoverTransform(600, 300, 400, 400); // square video in a wide stage
+  const c0 = apply(crop, 0, 0);
+  const c1 = apply(crop, 0, 400);
+  check("cover crops the overflow symmetrically", approx(c0.y, -150) && approx(c1.y, 450), JSON.stringify([c0, c1]));
+
+  // ── feather inset: the mask must stay strictly inside the window ──
+  const rect = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  const inRect = insetPolygon(rect, 10);
+  check(
+    "inset pulls a rect in on every side",
+    inRect.length === 4 &&
+      approx(inRect[0].x, 10) && approx(inRect[0].y, 10) &&
+      approx(inRect[1].x, 90) && approx(inRect[1].y, 10) &&
+      approx(inRect[2].x, 90) && approx(inRect[2].y, 90) &&
+      approx(inRect[3].x, 10) && approx(inRect[3].y, 90),
+    JSON.stringify(inRect)
+  );
+  check("inset of 0 is the identity", JSON.stringify(insetPolygon(rect, 0)) === JSON.stringify(rect));
+  check("negative inset is ignored", JSON.stringify(insetPolygon(rect, -5)) === JSON.stringify(rect));
+
+  const trap = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 70, y: 60 },
+    { x: 30, y: 60 },
+  ];
+  const inTrap = insetPolygon(trap, 6);
+  const area = (poly: Array<{ x: number; y: number }>) => {
+    let s = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      s += p.x * q.y - q.x * p.y;
+    }
+    return s / 2;
+  };
+  const inside = (p: { x: number; y: number }, poly: Array<{ x: number; y: number }>) => {
+    const signs = poly.map((v, i) => {
+      const w = poly[(i + 1) % poly.length];
+      return (w.x - v.x) * (p.y - v.y) - (w.y - v.y) * (p.x - v.x);
+    });
+    return signs.every((s) => s >= -1e-9) || signs.every((s) => s <= 1e-9);
+  };
+  check("inset keeps 4 vertices on a trapezoid", inTrap.length === 4, JSON.stringify(inTrap));
+  check(
+    "inset shrinks a trapezoid without collapsing it",
+    Math.abs(area(inTrap)) < Math.abs(area(trap)) && Math.abs(area(inTrap)) > 0,
+    String(area(inTrap))
+  );
+  check("inset preserves the winding direction", Math.sign(area(inTrap)) === Math.sign(area(trap)));
+  check(
+    "every inset vertex stays inside the window",
+    inTrap.every((p) => inside(p, trap)),
+    JSON.stringify(inTrap)
+  );
+
+  const line = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 20, y: 0 },
+  ];
+  check(
+    "degenerate (collinear) polygon passes through",
+    JSON.stringify(insetPolygon(line, 5)) === JSON.stringify(line)
+  );
+  check(
+    "fewer than 3 points pass through",
+    JSON.stringify(insetPolygon(rect.slice(0, 2), 5)) === JSON.stringify(rect.slice(0, 2))
+  );
+
+  // ── particles: spawn inside the window, fall, respawn above it ──
+  const box = { x: 0, y: 0, width: 100, height: 100 };
+  const stageHeight = 720;
+  let seed = 7 >>> 0;
+  const rng = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const drops = Array.from({ length: 20 }, () => createRainParticle(box, stageHeight, rng));
+  check(
+    "rain spawns inside the window",
+    drops.every((p) => p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100),
+    JSON.stringify(drops[0])
+  );
+  check("rain falls down", drops.every((p) => p.vy > 0));
+
+  const drop = { ...drops[0], x: 50, y: 10 };
+  stepParticle(drop, 0.016, box, rng);
+  check("stepping advances the drop", drop.y > 10, String(drop.y));
+
+  const farFlake = createSnowParticle(box, stageHeight, "far", rng);
+  const midFlake = createSnowParticle(box, stageHeight, "mid", rng);
+  const nearFlake = createSnowParticle(box, stageHeight, "near", rng);
+  check(
+    "snow layers fall at increasing speed",
+    farFlake.vy < midFlake.vy && midFlake.vy < nearFlake.vy,
+    [farFlake.vy, midFlake.vy, nearFlake.vy].join(",")
+  );
+
+  const fallen = { ...farFlake, y: 200 };
+  stepParticle(fallen, 0.016, box, rng);
+  check(
+    "a flake below the window respawns inside it",
+    fallen.y <= box.height && fallen.y >= -20 && fallen.x >= 0 && fallen.x <= 100,
+    JSON.stringify({ x: fallen.x, y: fallen.y })
+  );
+
+  const wrapped = { ...farFlake, x: 150, y: 50 };
+  stepParticle(wrapped, 0, box, rng);
+  check("a flake past the edge wraps back inside", wrapped.x >= 0 && wrapped.x <= 100, String(wrapped.x));
+
+  // ── tuning presets: ordered blur levels, sane rates, registry in sync ──
+  check("three ordered blur levels", BLUR_LEVELS.join(",") === "soft,medium,strong", BLUR_LEVELS.join(","));
+  check(
+    "blur radius grows across levels",
+    BLUR_TUNING.soft.blurRadius < BLUR_TUNING.medium.blurRadius &&
+      BLUR_TUNING.medium.blurRadius < BLUR_TUNING.strong.blurRadius,
+    [BLUR_TUNING.soft.blurRadius, BLUR_TUNING.medium.blurRadius, BLUR_TUNING.strong.blurRadius].join(",")
+  );
+  check(
+    "the strong level trades quality for radius",
+    BLUR_TUNING.strong.blurQuality === "low" && BLUR_TUNING.soft.blurQuality === "high"
+  );
+  check(
+    "every effect tunes a positive update rate",
+    Object.values(EFFECT_TUNING).every((t) => t.updateRate > 0 && t.edgeFeather >= 0 && t.particleCount >= 0)
+  );
+  check(
+    "menu effects and the tuning registry stay in sync",
+    EFFECT_ITEMS.every((i) => Object.keys(EFFECT_TUNING).includes(i.id)) &&
+      Object.keys(EFFECT_TUNING).every((id) => EFFECT_ITEMS.some((i) => i.id === id))
+  );
+  check(
+    "rain and snow are particle effects, blur is not",
+    EFFECT_TUNING.rain.particleCount > 0 &&
+      EFFECT_TUNING.snow.particleCount > 0 &&
+      EFFECT_TUNING.blur.particleCount === 0
+  );
+  check(
+    "effectParams resolves non-blur effects for any level",
+    effectParams("rain", "strong").blurRadius === 0 && effectParams("rain", "strong").particleCount === 150,
+    JSON.stringify(effectParams("rain", "strong"))
+  );
+  check(
+    "effectParams resolves the requested blur level",
+    effectParams("blur", "strong").blurRadius === BLUR_TUNING.strong.blurRadius &&
+      effectParams("blur", "strong").blurQuality === "low",
+    JSON.stringify(effectParams("blur", "strong"))
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);
