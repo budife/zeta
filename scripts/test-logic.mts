@@ -10,7 +10,9 @@ import {
   BLUR_LEVELS,
   BLUR_TUNING,
   EFFECT_TUNING,
+  GLITCH_TIMING,
   effectParams,
+  glitchSchedule,
   motionClass,
   nextBlurLevel,
   nextEffect,
@@ -2360,6 +2362,59 @@ console.log(
   check("scaledPx keeps the tuned value at reference width", scaledPx(14, 1280) === 14, String(scaledPx(14, 1280)));
   check("scaledPx halves with the stage", scaledPx(14, 640) === 7, String(scaledPx(14, 640)));
   check("scaledPx of 0 stays 0", scaledPx(0, 9999) === 0, String(scaledPx(0, 9999)));
+}
+
+console.log(
+  "\n[40] effect timing — glitch bursts (frequent, punchy) and their schedule"
+);
+{
+  let seed = 11 >>> 0;
+  const rng = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  check(
+    "quiet gaps stay short (250–750ms, was ~660–1950)",
+    GLITCH_TIMING.gapMinMs >= 250 && GLITCH_TIMING.gapMaxMs <= 750,
+    `${GLITCH_TIMING.gapMinMs}-${GLITCH_TIMING.gapMaxMs}`
+  );
+  check(
+    "bursts are punchy (≥240ms, was ~110–280)",
+    GLITCH_TIMING.burstMinMs >= 240,
+    String(GLITCH_TIMING.burstMinMs)
+  );
+
+  let inWindow = true;
+  let ordered = true;
+  for (let i = 0; i < 50; i++) {
+    const now = 1000 + i * 1000;
+    const s = glitchSchedule(now, rng);
+    const burst = s.end - now;
+    const gap = s.next - s.end;
+    if (burst < GLITCH_TIMING.burstMinMs || burst > GLITCH_TIMING.burstMaxMs) inWindow = false;
+    if (gap < GLITCH_TIMING.gapMinMs || gap > GLITCH_TIMING.gapMaxMs) inWindow = false;
+    if (s.next <= s.end) ordered = false;
+  }
+  check("every burst and gap lands inside its tuning window", inWindow);
+  check("every gap follows its burst (monotonic schedule)", ordered);
+
+  check(
+    "bands: ≥3 per burst with a likely tint",
+    GLITCH_TIMING.bandsMin >= 3 &&
+      GLITCH_TIMING.bandsMin <= GLITCH_TIMING.bandsMax &&
+      GLITCH_TIMING.tintChance > 0.3 &&
+      GLITCH_TIMING.tintChance < 1,
+    JSON.stringify(GLITCH_TIMING)
+  );
+
+  const burstAvg = (GLITCH_TIMING.burstMinMs + GLITCH_TIMING.burstMaxMs) / 2;
+  const gapAvg = (GLITCH_TIMING.gapMinMs + GLITCH_TIMING.gapMaxMs) / 2;
+  const duty = burstAvg / (burstAvg + gapAvg);
+  check("glitch is visible most of the time (duty > 35%)", duty > 0.35, duty.toFixed(2));
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

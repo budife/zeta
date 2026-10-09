@@ -128,3 +128,46 @@ export function nextBlurLevel(current: BlurLevel): BlurLevel {
 export function scaledPx(px: number, stageWidth: number): number {
   return (px * stageWidth) / REFERENCE_WIDTH;
 }
+
+/* ── Timing / character tunings ────────────────────────────────────────────
+ *
+ * How the temporal effects BEHAVE (when a glitch fires, how long the flash
+ * lasts, …). Pure data + pure schedulers so the feel is unit-testable and the
+ * engine stays free of magic numbers.
+ */
+
+/** Glitch is meant to be ever-present: short gaps, punchy bursts. */
+export const GLITCH_TIMING = {
+  /** Quiet between bursts, ms. */
+  gapMinMs: 250,
+  gapMaxMs: 750,
+  /** How long each burst rages, ms. */
+  burstMinMs: 240,
+  burstMaxMs: 520,
+  /** Displaced slice bands per burst. */
+  bandsMin: 3,
+  bandsMax: 6,
+  /** Max horizontal slice shift, css px. */
+  shiftMaxPx: 22,
+  /** Chance a band gets the hue tint. */
+  tintChance: 0.55,
+  /** Chance a band gets inverted colours. */
+  invertChance: 0.35,
+  /** Corrupted mosaic blocks per burst. */
+  blocksMin: 2,
+  blocksMax: 5,
+  /** Static noise rows drawn per burst frame. */
+  noiseRows: 3,
+} as const;
+
+/** Schedules the next glitch burst from `now`. */
+export function glitchSchedule(
+  now: number,
+  rng: () => number
+): { end: number; next: number } {
+  const end =
+    now + GLITCH_TIMING.burstMinMs + rng() * (GLITCH_TIMING.burstMaxMs - GLITCH_TIMING.burstMinMs);
+  const gap =
+    GLITCH_TIMING.gapMinMs + rng() * (GLITCH_TIMING.gapMaxMs - GLITCH_TIMING.gapMinMs);
+  return { end, next: end + gap };
+}

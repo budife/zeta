@@ -23,7 +23,7 @@
 
 import type { Point } from "./types";
 import { cameraCoverTransform, stagePolygonPoints } from "./stage";
-import { effectParams, scaledPx, type BlurLevel, type EffectParams } from "./effects";
+import { effectParams, scaledPx, glitchSchedule, GLITCH_TIMING, type BlurLevel, type EffectParams } from "./effects";
 
 export type Box = { x: number; y: number; width: number; height: number };
 export type Rng = () => number;
@@ -274,7 +274,9 @@ export const effectStats: EffectStats = {
   lastMs: 0,
 };
 
-type Band = { y: number; h: number; dx: number; tint: boolean };
+type Band = { y: number; h: number; dx: number; tint: boolean; invert: boolean };
+/** A torn mosaic chunk: copied from the clean frame to a displaced spot. */
+type Block = { sx: number; sy: number; w: number; h: number; dx: number; dy: number; invert: boolean };
 
 /**
  * Renders one effect over the live camera inside the hand window.
@@ -324,6 +326,9 @@ export class EffectEngine {
   private glitchEnd = -Infinity;
   private glitchNext = 0;
   private glitchBands: Band[] = [];
+  private glitchBlocks: Block[] = [];
+  /** True device scale of the last fit(); new geometry is tuned in css px. */
+  private scale = 1;
 
   constructor(canvas: HTMLCanvasElement, effectId: string, level: BlurLevel = "medium") {
     const ctx = canvas.getContext("2d");
@@ -394,6 +399,7 @@ export class EffectEngine {
   dispose(): void {
     this.particles = [];
     this.glitchBands = [];
+    this.glitchBlocks = [];
     this.lastPolygon = null;
     this.duotone = null;
     this.scanPattern = null;
@@ -429,7 +435,8 @@ export class EffectEngine {
       this.comicPattern = null;
       this.comicPeriod = 0;
     }
-    return w / cssW;
+    this.scale = w / cssW;
+    return this.scale;
   }
 
   private polygonMoved(polygon: Point[]): boolean {
@@ -499,7 +506,7 @@ export class EffectEngine {
         this.cyberPass(scale, now);
         break;
       case "glitch":
-        this.glitchPass(now);
+        this.glitchPass(scale, now);
         break;
       case "comic":
         this.comicPass(scale);
@@ -758,12 +765,12 @@ export class EffectEngine {
   }
 
   /**
-   * Displaced slices torn out of the CURRENT frame (bands shift horizontally,
-   * a hue-tinted one occasionally, blank beats in between). Clearing the band
-   * before redrawing lets the raw camera show through the tear — the content
-   * glitches, not a rectangle floating above it.
+   * Displaced slices torn out of the CURRENT frame, plus mosaic corruption,
+   * inverted bands and static rows — the content glitches, not a rectangle
+   * floating above it (the cleared band lets the raw camera show through).
+   * Bursts follow GLITCH_TIMING: frequent and punchy.
    */
-  private glitchPass(now: number): void {
+  private glitchPass(scale: number, now: number): void {
     if (now >= this.glitchEnd) {
       if (now >= this.glitchNext) this.startGlitch(now);
       else return; // idle between bursts — the sharp base is already correct
@@ -778,34 +785,78 @@ export class EffectEngine {
     sctx.filter = "none";
     sctx.globalCompositeOperation = "source-over";
     sctx.clearRect(0, 0, sw, sh);
-    sctx.drawImage(this.canvas, 0, 0);
+    sctx.drawImage(this.canvas, 0, 0); // clean base for every tear below
 
     const ctx = this.ctx;
+
+    // 1) full-width slices, shifted sideways (tinted or inverted)
     for (const band of this.glitchBands) {
       const y = Math.max(0, Math.round(band.y));
       const h = Math.max(2, Math.min(sh - y, Math.round(band.h)));
       ctx.clearRect(0, y, sw, h);
-      ctx.filter = band.tint ? "hue-rotate(90deg)" : "none";
+      ctx.filter = band.invert ? "invert(1)" : band.tint ? "hue-rotate(90deg)" : "none";
       ctx.drawImage(this.scratch, 0, y, sw, h, Math.round(band.dx), y, sw, h);
       ctx.filter = "none";
+    }
+
+    // 2) mosaic corruption: chunks of the clean frame torn somewhere else
+    for (const b of this.glitchBlocks) {
+      const bw = Math.min(sw, Math.max(2, Math.round(b.w)));
+      const bh = Math.min(sh, Math.max(2, Math.round(b.h)));
+      const sx = Math.max(0, Math.min(sw - bw, Math.round(b.sx)));
+      const sy = Math.max(0, Math.min(sh - bh, Math.round(b.sy)));
+      ctx.filter = b.invert ? "invert(1)" : "none";
+      ctx.drawImage(this.scratch, sx, sy, bw, bh, sx + Math.round(b.dx), sy + Math.round(b.dy), bw, bh);
+      ctx.filter = "none";
+    }
+
+    // 3) static rows flickering across the frame
+    for (let i = 0; i < GLITCH_TIMING.noiseRows; i++) {
+      const y = Math.floor(Math.random() * sh);
+      const h = Math.max(1, Math.round((1 + Math.random() * 3) * scale));
+      ctx.fillStyle = Math.random() < 0.5 ? "rgba(255, 255, 255, 0.35)" : "rgba(10, 8, 16, 0.4)";
+      ctx.fillRect(0, y, sw, h);
     }
   }
 
   private startGlitch(now: number): void {
+    const rng = Math.random;
+    const schedule = glitchSchedule(now, rng);
+    this.glitchEnd = schedule.end;
+    this.glitchNext = schedule.next;
+
+    const wMax = this.canvas.width;
     const hMax = this.canvas.height;
+    const T = GLITCH_TIMING;
+
     this.glitchBands = [];
-    const count = 2 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < count; i++) {
-      const h = 6 + Math.random() * Math.max(10, hMax * 0.08);
+    const bandCount = T.bandsMin + Math.floor(rng() * (T.bandsMax - T.bandsMin + 1));
+    for (let i = 0; i < bandCount; i++) {
+      const h = 6 + rng() * Math.max(10, hMax * 0.08);
       this.glitchBands.push({
-        y: Math.random() * Math.max(1, hMax - h),
+        y: rng() * Math.max(1, hMax - h),
         h,
-        dx: (Math.random() < 0.5 ? -1 : 1) * (4 + Math.random() * 14),
-        tint: Math.random() < 0.4,
+        dx: (rng() < 0.5 ? -1 : 1) * (4 + rng() * T.shiftMaxPx) * this.scale,
+        tint: rng() < T.tintChance,
+        invert: rng() < T.invertChance,
       });
     }
-    this.glitchEnd = now + 110 + Math.random() * 170;
-    this.glitchNext = this.glitchEnd + 550 + Math.random() * 1400;
+
+    this.glitchBlocks = [];
+    const blockCount = T.blocksMin + Math.floor(rng() * (T.blocksMax - T.blocksMin + 1));
+    for (let i = 0; i < blockCount; i++) {
+      const bw = (16 + rng() * 70) * this.scale;
+      const bh = (8 + rng() * 34) * this.scale;
+      this.glitchBlocks.push({
+        sx: rng() * Math.max(1, wMax - bw),
+        sy: rng() * Math.max(1, hMax - bh),
+        w: bw,
+        h: bh,
+        dx: (rng() < 0.5 ? -1 : 1) * (10 + rng() * 50) * this.scale,
+        dy: (rng() < 0.5 ? -1 : 1) * (4 + rng() * 16) * this.scale,
+        invert: rng() < T.invertChance,
+      });
+    }
   }
 
   /** Soft alpha falloff at the window edge, masked with destination-in. */
