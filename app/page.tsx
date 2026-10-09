@@ -157,6 +157,7 @@ export default function HomePage() {
               subscribe={subscribeSnapshot}
               contentMode={status.contentMode}
               src={media}
+              templateId={status.template}
               srcMimeType={media === uploaded ? uploadedMime : null}
               faceAlignEnabled={media === DEFAULT_MEDIA}
               effect={status.effect}

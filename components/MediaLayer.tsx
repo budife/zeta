@@ -25,6 +25,12 @@ export type MediaLayerProps = {
   contentMode: MenuPick["kind"] | null;
   /** Template/upload asset path — only rendered while contentMode is "template". */
   src: string | null;
+  /**
+   * Raw template id from status.template (e.g. "face-wireframe", "template").
+   * Needed because `src` is a resolved path (/vectors/….svg) while overlay
+   * detection checks the bare id.
+   */
+  templateId?: string | null;
   /** MIME type for uploaded blob URLs; asset paths can infer from extension. */
   srcMimeType?: string | null;
   /**
@@ -73,6 +79,7 @@ export function MediaLayer({
   subscribe,
   contentMode,
   src,
+  templateId = null,
   srcMimeType = null,
   faceAlignEnabled = true,
   effect = null,
@@ -103,10 +110,11 @@ export function MediaLayer({
   const canvasMotion =
     contentMode === "motion" && motion && isCanvasMotion(motion) ? motion : null;
   // Overlay templates (face-wireframe, cyber-mask, …) render a canvas on top
-  // of the camera instead of an <img>/<video> media element.
+  // of the camera instead of an <img>/<video> media element. Detected from
+  // the raw template id, not the resolved src path.
   const overlayTemplate =
-    contentMode === "template" && src !== null && isOverlayTemplate(src)
-      ? (src as OverlayTemplateId)
+    contentMode === "template" && templateId !== null && isOverlayTemplate(templateId)
+      ? (templateId as OverlayTemplateId)
       : null;
 
   // Effect engine lifecycle: one engine per (effect id, blur level). Its
