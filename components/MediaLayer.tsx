@@ -282,7 +282,7 @@ export function MediaLayer({
   return (
     <div className="media-layer" aria-hidden="true">
       <div ref={clipRef} className="media-layer__clip">
-        {contentMode === "template" && src !== null && (
+        {contentMode === "template" && src !== null && !overlayTemplate && (
           <div
             ref={contentRef}
             className="media-layer__content"
