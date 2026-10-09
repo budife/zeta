@@ -9,10 +9,15 @@ import { HandFrameEngine } from "../lib/engine";
 import {
   BLUR_LEVELS,
   BLUR_TUNING,
+  COMIC_LINES_TIMING,
   EFFECT_TUNING,
   GLITCH_TIMING,
+  GUST_TIMING,
+  LIGHTNING_TIMING,
+  SHAFT_TUNING,
   effectParams,
   glitchSchedule,
+  lightningAlpha,
   motionClass,
   nextBlurLevel,
   nextEffect,
@@ -2415,6 +2420,56 @@ console.log(
   const gapAvg = (GLITCH_TIMING.gapMinMs + GLITCH_TIMING.gapMaxMs) / 2;
   const duty = burstAvg / (burstAvg + gapAvg);
   check("glitch is visible most of the time (duty > 35%)", duty > 0.35, duty.toFixed(2));
+}
+
+console.log(
+  "\n[41] effect character — lightning, wind gusts, light shafts, comic speed-lines"
+);
+{
+  check(
+    "lightning: rare strikes, brief flash",
+    LIGHTNING_TIMING.gapMinMs >= 4000 &&
+      LIGHTNING_TIMING.gapMaxMs > LIGHTNING_TIMING.gapMinMs &&
+      LIGHTNING_TIMING.flashMs > 0 &&
+      LIGHTNING_TIMING.flashMs <= 250,
+    `${LIGHTNING_TIMING.gapMinMs}-${LIGHTNING_TIMING.gapMaxMs}/${LIGHTNING_TIMING.flashMs}`
+  );
+  check(
+    "the flash is a double pulse (bright, dip, weaker)",
+    lightningAlpha(35) > 0.4 && lightningAlpha(80) === 0 && lightningAlpha(130) > 0.1,
+    [lightningAlpha(35), lightningAlpha(80), lightningAlpha(130)].join(",")
+  );
+  check(
+    "no flash outside the window",
+    lightningAlpha(-1) === 0 &&
+      lightningAlpha(LIGHTNING_TIMING.flashMs) === 0 &&
+      lightningAlpha(9999) === 0
+  );
+  check(
+    "gusts: short pushes separated by longer rests",
+    GUST_TIMING.activeMaxMs < GUST_TIMING.restMinMs &&
+      GUST_TIMING.activeMinMs < GUST_TIMING.activeMaxMs &&
+      GUST_TIMING.restMinMs < GUST_TIMING.restMaxMs &&
+      GUST_TIMING.strength > 0,
+    JSON.stringify(GUST_TIMING)
+  );
+  check(
+    "shafts: a few soft beams that sway",
+    SHAFT_TUNING.count >= 2 &&
+      SHAFT_TUNING.count <= 5 &&
+      SHAFT_TUNING.alpha > 0 &&
+      SHAFT_TUNING.alpha <= 0.25 &&
+      SHAFT_TUNING.widthFrac > 0 &&
+      SHAFT_TUNING.swayMs > 0,
+    JSON.stringify(SHAFT_TUNING)
+  );
+  check(
+    "comic speed-lines: periodic bursts of many lines",
+    COMIC_LINES_TIMING.count >= 20 &&
+      COMIC_LINES_TIMING.everyMinMs < COMIC_LINES_TIMING.everyMaxMs &&
+      COMIC_LINES_TIMING.activeMs > 0,
+    JSON.stringify(COMIC_LINES_TIMING)
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

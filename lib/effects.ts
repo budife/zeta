@@ -171,3 +171,55 @@ export function glitchSchedule(
     GLITCH_TIMING.gapMinMs + rng() * (GLITCH_TIMING.gapMaxMs - GLITCH_TIMING.gapMinMs);
   return { end, next: end + gap };
 }
+
+/** Rain's showpiece: a rare strike with a double-pulse flash. */
+export const LIGHTNING_TIMING = {
+  /** Quiet between strikes, ms (4.5–9s). */
+  gapMinMs: 4500,
+  gapMaxMs: 9000,
+  /** Whole flash envelope, ms. */
+  flashMs: 160,
+  /** How long the bolt itself stays drawn, ms. */
+  boltMs: 70,
+} as const;
+
+/**
+ * White-flash brightness at `t` ms after the strike: pulse 1 (0–70ms, strong),
+ * a dead dip, then pulse 2 (95ms–flashMs, weaker). 0 outside the window.
+ */
+export function lightningAlpha(t: number): number {
+  const { flashMs } = LIGHTNING_TIMING;
+  if (t < 0 || t >= flashMs) return 0;
+  if (t < 70) return 0.5 * Math.sin((Math.PI * t) / 70);
+  if (t < 95) return 0;
+  return 0.28 * Math.sin((Math.PI * (t - 95)) / (flashMs - 95));
+}
+
+/** Snow's wind gusts: short pushes separated by longer rests. */
+export const GUST_TIMING = {
+  activeMinMs: 1800,
+  activeMaxMs: 3200,
+  restMinMs: 6000,
+  restMaxMs: 11000,
+  /** Peak drift as a fraction of stage height per second (at full depth). */
+  strength: 0.5,
+} as const;
+
+/** Fog's light shafts: a few soft beams slowly swaying. */
+export const SHAFT_TUNING = {
+  count: 3,
+  /** Peak beam alpha (kept low — fog must stay mist, not spotlight). */
+  alpha: 0.12,
+  /** Beam width as a fraction of stage width. */
+  widthFrac: 0.16,
+  /** Full sway cycle, ms. */
+  swayMs: 14000,
+} as const;
+
+/** Comic's manga speed-lines: periodic bursts from a random focus. */
+export const COMIC_LINES_TIMING = {
+  everyMinMs: 4000,
+  everyMaxMs: 7500,
+  activeMs: 700,
+  count: 34,
+} as const;

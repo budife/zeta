@@ -23,7 +23,19 @@
 
 import type { Point } from "./types";
 import { cameraCoverTransform, stagePolygonPoints } from "./stage";
-import { effectParams, scaledPx, glitchSchedule, GLITCH_TIMING, type BlurLevel, type EffectParams } from "./effects";
+import {
+  COMIC_LINES_TIMING,
+  effectParams,
+  scaledPx,
+  glitchSchedule,
+  GLITCH_TIMING,
+  GUST_TIMING,
+  LIGHTNING_TIMING,
+  SHAFT_TUNING,
+  lightningAlpha,
+  type BlurLevel,
+  type EffectParams,
+} from "./effects";
 
 export type Box = { x: number; y: number; width: number; height: number };
 export type Rng = () => number;
@@ -330,6 +342,27 @@ export class EffectEngine {
   /** True device scale of the last fit(); new geometry is tuned in css px. */
   private scale = 1;
 
+  // Rain lightning: strike schedule + the bolt drawn for the first beat.
+  private nextStrike = 0;
+  private strikeAt = -Infinity;
+  private bolt: Point[] | null = null;
+
+  // Snow wind gusts: push windows with a smooth bell envelope.
+  private gustStart = -Infinity;
+  private gustEnd = -Infinity;
+  private gustNext = 0;
+
+  // Comic speed-lines: periodic bursts from a fixed focus point.
+  private linesStart = -Infinity;
+  private linesEnd = -Infinity;
+  private linesNext = 0;
+  private lineAngles: number[] = [];
+  private lineFocus: Point = { x: 0, y: 0 };
+
+  // Cyberpunk chromatic aberration: two channel-isolated frame copies.
+  private tempA: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+  private tempB: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+
   constructor(canvas: HTMLCanvasElement, effectId: string, level: BlurLevel = "medium") {
     const ctx = canvas.getContext("2d");
     const scratch = document.createElement("canvas");
@@ -400,6 +433,10 @@ export class EffectEngine {
     this.particles = [];
     this.glitchBands = [];
     this.glitchBlocks = [];
+    this.bolt = null;
+    this.lineAngles = [];
+    this.tempA = null;
+    this.tempB = null;
     this.lastPolygon = null;
     this.duotone = null;
     this.scanPattern = null;
@@ -456,6 +493,21 @@ export class EffectEngine {
     }
   }
 
+  /** Lazily create/resize one channel-isolation canvas (chromatic aberration). */
+  private reuseChannelTemp(
+    temp: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null,
+    w: number,
+    h: number
+  ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+    if (temp && temp.canvas.width === w && temp.canvas.height === h) return temp;
+    const canvas = temp?.canvas ?? document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    return { canvas, ctx };
+  }
+
   /** The camera frame itself: cover + mirror through one matrix, one draw. */
   private drawBase(
     video: HTMLVideoElement,
@@ -509,7 +561,7 @@ export class EffectEngine {
         this.glitchPass(scale, now);
         break;
       case "comic":
-        this.comicPass(scale);
+        this.comicPass(scale, now);
         break;
     }
   }
@@ -573,9 +625,36 @@ export class EffectEngine {
     if (this.particles.length !== this.params.particleCount) this.seed(box, cssH);
     if (this.particles.length === 0) return;
 
+    // Snow wind gusts: schedule the next push (or evaluate the running one).
+    let gustEnv = 0;
+    if (kind === "snow") {
+      if (now >= this.gustEnd) {
+        if (now >= this.gustNext) {
+          this.gustStart = now;
+          this.gustEnd =
+            now +
+            GUST_TIMING.activeMinMs +
+            Math.random() * (GUST_TIMING.activeMaxMs - GUST_TIMING.activeMinMs);
+          this.gustNext =
+            this.gustEnd +
+            GUST_TIMING.restMinMs +
+            Math.random() * (GUST_TIMING.restMaxMs - GUST_TIMING.restMinMs);
+        }
+      } else {
+        const progress = (now - this.gustStart) / Math.max(1, this.gustEnd - this.gustStart);
+        gustEnv = 0.5 - 0.5 * Math.cos(Math.PI * 2 * progress); // smooth bell 0→1→0
+      }
+    }
+
     const dt = this.lastStep === 0 ? 0 : Math.max(0, (now - this.lastStep) / 1000);
     this.lastStep = now;
-    for (const p of this.particles) stepParticle(p, dt, box, Math.random);
+    for (const p of this.particles) {
+      stepParticle(p, dt, box, Math.random);
+      if (gustEnv > 0) {
+        // Near flakes ride the gust harder than far ones (depth parallax).
+        p.x += GUST_TIMING.strength * cssH * gustEnv * (0.3 + p.depth) * dt;
+      }
+    }
 
     const k = scaledPx(1, cssW);
     const ctx = this.ctx;
@@ -591,9 +670,11 @@ export class EffectEngine {
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
       }
+      this.lightningDraw(cssW, cssH, now, ctx);
     } else {
+      const swayMul = 1 + 1.2 * gustEnv; // gusts also whip the sway
       for (const p of this.particles) {
-        const x = p.x + Math.sin(p.phase) * p.sway * k;
+        const x = p.x + Math.sin(p.phase) * p.sway * swayMul * k;
         ctx.globalAlpha = p.alpha;
         ctx.fillStyle = "#ffffff";
         ctx.beginPath();
@@ -603,6 +684,46 @@ export class EffectEngine {
       ctx.globalAlpha = 1;
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * Rain's showpiece: a rare strike with a glowing bolt (first beat) and a
+   * double-pulse white flash over the whole frame. Called with the css-px
+   * transform active.
+   */
+  private lightningDraw(cssW: number, cssH: number, now: number, ctx: CanvasRenderingContext2D): void {
+    if (now >= this.nextStrike) {
+      this.strikeAt = now;
+      this.bolt = generateBolt(cssW, cssH);
+      this.nextStrike =
+        now +
+        LIGHTNING_TIMING.gapMinMs +
+        Math.random() * (LIGHTNING_TIMING.gapMaxMs - LIGHTNING_TIMING.gapMinMs);
+    }
+    const since = now - this.strikeAt;
+    if (since < 0 || since >= LIGHTNING_TIMING.flashMs) return;
+
+    if (this.bolt && since < LIGHTNING_TIMING.boltMs) {
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(this.bolt[0].x, this.bolt[0].y);
+      for (let i = 1; i < this.bolt.length; i++) ctx.lineTo(this.bolt[i].x, this.bolt[i].y);
+      ctx.strokeStyle = "rgba(214, 232, 255, 0.5)";
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    const flash = lightningAlpha(since);
+    if (flash > 0) {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = `rgba(255, 255, 255, ${flash.toFixed(3)})`;
+      ctx.fillRect(0, 0, cssW, cssH);
+      ctx.globalCompositeOperation = "source-over";
+    }
   }
 
   private seed(box: Box, stageHeight: number): void {
@@ -622,6 +743,38 @@ export class EffectEngine {
     const ctx = this.ctx;
     const sw = this.canvas.width;
     const sh = this.canvas.height;
+
+    // Chromatic aberration FIRST (before grade): red channel shifted one way,
+    // cyan the other, screen-blended so the fringes glow like a bad RGB cable.
+    this.tempA = this.reuseChannelTemp(this.tempA, sw, sh);
+    this.tempB = this.reuseChannelTemp(this.tempB, sw, sh);
+    if (this.tempA && this.tempB) {
+      const dx = Math.max(2, Math.round(2.5 * scale));
+      const a = this.tempA;
+      a.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      a.ctx.globalCompositeOperation = "source-over";
+      a.ctx.clearRect(0, 0, sw, sh);
+      a.ctx.drawImage(ctx.canvas, 0, 0);
+      a.ctx.globalCompositeOperation = "multiply";
+      a.ctx.fillStyle = "#ff0000";
+      a.ctx.fillRect(0, 0, sw, sh);
+
+      const b = this.tempB;
+      b.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      b.ctx.globalCompositeOperation = "source-over";
+      b.ctx.clearRect(0, 0, sw, sh);
+      b.ctx.drawImage(ctx.canvas, 0, 0);
+      b.ctx.globalCompositeOperation = "multiply";
+      b.ctx.fillStyle = "#00ffff";
+      b.ctx.fillRect(0, 0, sw, sh);
+
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(a.canvas, -dx, 0);
+      ctx.drawImage(b.canvas, dx, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+    }
 
     const key = `${sw}x${sh}`;
     if (this.duotoneKey !== key || !this.duotone) {
@@ -708,6 +861,28 @@ export class EffectEngine {
       ctx.fillStyle = g;
       ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
     }
+
+    // Light shafts: soft beams swaying slowly over the mist (screen, so they
+    // lift the frame instead of painting on it).
+    ctx.globalCompositeOperation = "screen";
+    const reach = Math.hypot(cssW, cssH);
+    for (let i = 0; i < SHAFT_TUNING.count; i++) {
+      const sway = Math.sin((now / SHAFT_TUNING.swayMs) * Math.PI * 2 + i * 2.1) * 0.07;
+      const angle = (i - (SHAFT_TUNING.count - 1) / 2) * 0.3 + sway;
+      const bw = cssW * SHAFT_TUNING.widthFrac;
+      const cx = cssW * (0.2 + (i / Math.max(1, SHAFT_TUNING.count - 1)) * 0.6);
+      ctx.save();
+      ctx.translate(cx, -reach * 0.1);
+      ctx.rotate(angle);
+      const beam = ctx.createLinearGradient(-bw / 2, 0, bw / 2, 0);
+      beam.addColorStop(0, "rgba(255, 251, 235, 0)");
+      beam.addColorStop(0.5, `rgba(255, 251, 235, ${SHAFT_TUNING.alpha})`);
+      beam.addColorStop(1, "rgba(255, 251, 235, 0)");
+      ctx.fillStyle = beam;
+      ctx.fillRect(-bw / 2, 0, bw, reach * 1.2);
+      ctx.restore();
+    }
+    ctx.globalCompositeOperation = "source-over";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
@@ -716,7 +891,7 @@ export class EffectEngine {
    * nearest-neighbour upscale) and multiply a cached halftone dot grid over
    * it — posterised print blocks with an ink-screen texture.
    */
-  private comicPass(scale: number): void {
+  private comicPass(scale: number, now: number): void {
     const ctx = this.ctx;
     const sw = this.canvas.width;
     const sh = this.canvas.height;
@@ -762,6 +937,45 @@ export class EffectEngine {
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
     }
+
+    // Manga speed-lines: periodic bursts of radial focus lines, fading in and out.
+    if (now >= this.linesEnd && now >= this.linesNext) this.startComicLines(now, sw, sh);
+    if (this.lineAngles.length > 0 && now >= this.linesStart && now < this.linesEnd) {
+      const progress = (now - this.linesStart) / Math.max(1, this.linesEnd - this.linesStart);
+      const fade = Math.sin(Math.PI * progress); // smooth 0 → 1 → 0
+      if (fade > 0.02) {
+        const R = Math.hypot(sw, sh);
+        const r0 = R * 0.25;
+        ctx.strokeStyle = `rgba(18, 14, 26, ${(0.45 * fade).toFixed(3)})`;
+        ctx.lineWidth = Math.max(1, Math.round(2 * scale));
+        ctx.beginPath();
+        for (const angle of this.lineAngles) {
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          ctx.moveTo(this.lineFocus.x + cos * r0, this.lineFocus.y + sin * r0);
+          ctx.lineTo(this.lineFocus.x + cos * R, this.lineFocus.y + sin * R);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  private startComicLines(now: number, sw: number, sh: number): void {
+    const T = COMIC_LINES_TIMING;
+    this.lineFocus = {
+      x: sw * (0.3 + Math.random() * 0.4),
+      y: sh * (0.3 + Math.random() * 0.4),
+    };
+    this.lineAngles = Array.from({ length: T.count }, (_, i) => {
+      const base = (Math.PI * 2 * i) / T.count;
+      return base + (Math.random() - 0.5) * ((Math.PI * 2) / T.count) * 0.8;
+    });
+    this.linesStart = now;
+    this.linesEnd = now + T.activeMs;
+    this.linesNext =
+      this.linesEnd +
+      T.everyMinMs +
+      Math.random() * (T.everyMaxMs - T.everyMinMs);
   }
 
   /**
@@ -908,4 +1122,17 @@ function boundingBox(polygon: Point[]): Box {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+/** A jagged top-to-bottom bolt in css px — jittered walk across the stage. */
+function generateBolt(cssW: number, cssH: number): Point[] {
+  const points: Point[] = [];
+  const steps = 9;
+  let x = cssW * (0.2 + Math.random() * 0.6);
+  for (let i = 0; i <= steps; i++) {
+    points.push({ x, y: (cssH * i) / steps });
+    x += (Math.random() - 0.5) * cssW * 0.14;
+    x = Math.max(cssW * 0.05, Math.min(cssW * 0.95, x));
+  }
+  return points;
 }
