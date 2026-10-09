@@ -10,6 +10,7 @@ import { PoseTracker } from "./PoseTracker";
 import { RegionTracker } from "./RegionTracker";
 import { templateRegionFor } from "@/lib/templateRegions";
 import { TRACK_CONFIG } from "@/lib/frameTracker";
+import { effectStats } from "@/lib/effectEngine";
 
 export type DebugOverlayProps = {
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void;
@@ -224,6 +225,20 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
           <div>
             <dt>State</dt>
             <dd>{stats ? stats.reason : "—"}</dd>
+          </div>
+          {/* Engine counters, read from lib/effectEngine's module stats —
+              filled while an effect renders, "-" otherwise. Debug-only. */}
+          <div>
+            <dt>Effect</dt>
+            <dd>
+              {effectStats.effect
+                ? effectStats.effect +
+                  (effectStats.blurRadius > 0 ? ` r${effectStats.blurRadius}px` : "") +
+                  ` f${effectStats.feather}px` +
+                  (effectStats.particles > 0 ? ` n${effectStats.particles}` : "") +
+                  ` ${effectStats.fps}fps ${effectStats.lastMs}ms`
+                : "—"}
+            </dd>
           </div>
         </dl>
       </div>

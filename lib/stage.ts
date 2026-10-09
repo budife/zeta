@@ -346,6 +346,7 @@ export function cameraCoverTransform(
   const k = Math.max(stageWidth / videoWidth, stageHeight / videoHeight);
   const offsetX = (stageWidth - videoWidth * k) / 2;
   const offsetY = (stageHeight - videoHeight * k) / 2;
-  // Forward: x' = x·k + offsetX. Mirrored: x'' = stageWidth − x'.
+  if (!MIRROR_PREVIEW) return { a: k, b: 0, c: 0, d: k, e: offsetX, f: offsetY };
+  // Mirrored: x'' = stageWidth − x' (same mirrorX() every overlay applies).
   return { a: -k, b: 0, c: 0, d: k, e: stageWidth - offsetX, f: offsetY };
 }
