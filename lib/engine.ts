@@ -34,6 +34,7 @@ import { EMPTY_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } f
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
 import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
+import { HandIdentityTracker } from "./handIdentity";
 import {
   advanceRegion,
   classifyRegion,
@@ -125,6 +126,13 @@ export class HandFrameEngine {
    * gone long enough to release the selection.
    */
   private tracker = new StickyFrameTracker();
+
+  /**
+   * Binds each MediaPipe hand to a persistent left/right slot so the four
+   * frame corners always arrive at the tracker in the same order — the
+   * primary defence against anchor swaps and quadrilateral flips.
+   */
+  private handIdentity = new HandIdentityTracker();
 
   private selection: SelectionState = INITIAL_SELECTION;
 
@@ -487,7 +495,20 @@ export class HandFrameEngine {
     const wasActive = selectionIsActive(this.selection.phase);
     const handResult = this.handLandmarker.detectForVideo(video, timestamp);
     // MediaPipe's raw hand output — the input side of the coordinate chain.
-    const rawHandLandmarks = handResult.landmarks ?? [];
+    const rawHands = handResult.landmarks ?? [];
+
+    // ------------------------------------------------------- hand identity
+    // Reorder the hand arrays into persistent left/right slot order so the
+    // four frame corners always arrive at the tracker in the same order —
+    // the primary defence against anchor swaps and quadrilateral flips.
+    // The original indices are kept so swipe/pointer can map back.
+    const identity = this.handIdentity.update(
+      rawHands,
+      handResult.handednesses ?? null,
+      width,
+      height
+    );
+    const rawHandLandmarks = identity.ordered;
     const pixelHands = rawHandLandmarks.map((lm) => toPixelLandmarks(lm, width, height));
 
     // --------------------------------------------------------------- swipe
@@ -500,13 +521,14 @@ export class HandFrameEngine {
     // guard in the frame feed below keeps the locked window intact while the
     // sign is held, TEST 11); swipeLeft resets from FRAME_LOCKED, running its
     // RESETTING side effects synchronously inside handleModeEvent (Slice H).
-    const swipeHandIndex = pickSwipeHand(
-      pixelHands,
-      handResult.handednesses ?? null,
-      SWIPE_CONFIG.hand
-    );
+    // The swipe uses the ORIGINAL MediaPipe order (identity.indexMap maps
+    // ordered index → original index).
+    const origPixelHands = rawHands.map((lm) => toPixelLandmarks(lm, width, height));
+    const origHandedness = handResult.handednesses ?? null;
+    const swipeOrigIndex = pickSwipeHand(origPixelHands, origHandedness, SWIPE_CONFIG.hand);
+    const swipeHandIndex = swipeOrigIndex >= 0 ? identity.indexMap.indexOf(swipeOrigIndex) : -1;
     const swipe = this.swipeTracker.update(
-      swipeHandIndex >= 0 ? pixelHands[swipeHandIndex] : null,
+      swipeOrigIndex >= 0 ? origPixelHands[swipeOrigIndex] : null,
       timestamp
     );
     if (swipe === "swipeDown" && gestureAllowed(this.mode, "swipeDown")) {
@@ -527,7 +549,7 @@ export class HandFrameEngine {
     // FRAME_LOCKED (the gesture matrix decides where it means anything);
     // every other mode the detector still runs so its window and edge state
     // stay fresh.
-    const pinchDouble = this.pinchCycle.update(rawHandLandmarks, timestamp);
+    const pinchDouble = this.pinchCycle.update(rawHands, timestamp);
     if (pinchDouble && gestureAllowed(this.mode, "pinch") && this.status.contentMode === "effect") {
       // The cycle goes through selectionPatch too: an effect arriving by
       // gesture keeps contentMode on "effect" and nulls template/motion
@@ -542,15 +564,15 @@ export class HandFrameEngine {
     // preferred hand is out of frame. Consumed by the menu layer through the
     // coordinate chain; published in every mode so the debug overlay is
     // always honest.
-    const pointerHand = swipeHandIndex;
     const pointerLm =
-      pointerHand >= 0 ? rawHandLandmarks[pointerHand][8] : null; // landmark 8 = index tip
+      swipeOrigIndex >= 0 ? rawHands[swipeOrigIndex][8] : null; // landmark 8 = index tip
     const pointer = pointerLm ? { x: pointerLm.x * width, y: pointerLm.y * height } : null;
 
     // Handedness labels as reported, for the debug readout — this is the
-    // row that settles whether the camera's labels are trustworthy.
-    const handednessLabels = (handResult.handednesses ?? []).map(
-      (h, i) => `${i}:${h?.[0]?.categoryName ?? "?"} ${(h?.[0]?.score ?? 0).toFixed(2)}`
+    // row that settles whether the camera's labels are trustworthy. Uses the
+    // ORIGINAL MediaPipe order (the identity tracker's labels column).
+    const handednessLabels = identity.labels.map(
+      (name, i) => `${i}:${name}`
     );
 
     // MODE GATE (spec AK / TEST 1): frame formation runs only in FRAME_SEARCH
@@ -772,6 +794,7 @@ export class HandFrameEngine {
       missedFrames: this.tracker.missedFrames,
       trackState: this.tracker.state,
       anchorMissed: this.tracker.slotMissedFrames,
+      handIdentities: identity.labels,
       handReasons: detection.gestures.map((g) => (g.ok ? "ok" : g.reason)),
       region: this.regionLock,
       regionTransform,
@@ -796,6 +819,8 @@ export class HandFrameEngine {
         selection: this.selection,
         region: this.regionLock,
         regionScores: regionScoresThisFrame,
+        blindSeconds: this.tracker.blindSeconds,
+        handBlindSeconds: this.tracker.handBlindSeconds,
         snapshot,
       };
     }

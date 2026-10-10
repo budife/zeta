@@ -9,6 +9,7 @@ import { isCanvasMotion, FrameHistory, echoAlpha, shutterWeight, MOTION_TUNING }
 import { isOverlayTemplate, overlayStyle, landmarksToPixels, FACE_WIRE_EDGES, POSE_SKELETON_EDGES } from "../lib/overlayTemplates";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
 import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
+import { HandIdentityTracker } from "../lib/handIdentity";
 import { HandFrameEngine } from "../lib/engine";
 import {
   BLUR_LEVELS,
@@ -1123,8 +1124,9 @@ console.log("\n[26] sticky window — hold through dropouts, predict, then lose"
   t.update(moving, 0.016);
   check("recovery clears the miss count", t.missedFrames === 0 && t.state === "tracking", `${t.missedFrames}/${t.state}`);
 
-  // TEST 9/10: only staying blind past the budget loses the window.
-  for (let i = 0; i < TRACK_CONFIG.maxMissedFrames; i++) t.update(null, 0.016);
+  // TEST 9/10: only staying blind past the time budget loses the window.
+  // holdSeconds = 0.15s → at 16 ms/frame that is ~10 frames.
+  for (let i = 0; i < 9; i++) t.update(null, 0.016);
   check("at the budget the window is still published", t.value.length === 4 && t.state !== "lost", `${t.state}`);
   t.update(null, 0.016);
   check("past the budget -> lost", t.state === "lost", t.state);
@@ -3040,6 +3042,137 @@ console.log("\n[52] Existing behaviour preserved — selection, modes, effects (
   check(
     "isLiveRow: no row live when contentMode null",
     isLiveRow("sub", "blur", "EFFECTS", null, { template: null, effect: null, motion: null }) === false
+  );
+}
+
+console.log("\n[53] hand identity — stable slot binding across frames");
+{
+  const W2 = 1280;
+  const H2 = 720;
+  const id = new HandIdentityTracker();
+
+  // Two hands: A at image-left, B at image-right.
+  const mkHand = (cx, cy) => {
+    const lm = Array.from({ length: 21 }, () => ({ x: cx / W2, y: cy / H2, z: 0 }));
+    lm[0] = { x: cx / W2, y: cy / H2, z: 0 };
+    lm[9] = { x: cx / W2, y: (cy + 60) / H2, z: 0 };
+    lm[4] = { x: (cx - 30) / W2, y: (cy + 120) / H2, z: 0 };
+    lm[8] = { x: (cx + 30) / W2, y: (cy + 120) / H2, z: 0 };
+    return lm;
+  };
+  const handA = mkHand(300, 300); // left
+  const handB = mkHand(900, 300); // right
+
+  // First frame: [A, B] with labels.
+  const labels1 = [[{ categoryName: "Left" }], [{ categoryName: "Right" }]];
+  const r1 = id.update([handA, handB], labels1, W2, H2);
+  check("first frame: 2 hands ordered", r1.ordered.length === 2, String(r1.ordered.length));
+  check(
+    "first frame: hand A (image-left) is slot 0",
+    r1.ordered[0] === handA,
+    JSON.stringify(r1.indexMap)
+  );
+  check(
+    "first frame: hand B (image-right) is slot 1",
+    r1.ordered[1] === handB,
+    JSON.stringify(r1.indexMap)
+  );
+
+  // Second frame: MediaPipe REORDERS to [B, A]. Identity must keep A in slot 0.
+  const r2 = id.update([handB, handA], labels1, W2, H2);
+  check(
+    "reordered input: hand A stays slot 0",
+    r2.ordered[0] === handA,
+    JSON.stringify(r2.indexMap)
+  );
+  check(
+    "reordered input: hand B stays slot 1",
+    r2.ordered[1] === handB,
+    JSON.stringify(r2.indexMap)
+  );
+
+  // Small movement: identities stay stable.
+  const movedA = mkHand(320, 310);
+  const movedB = mkHand(880, 290);
+  const r3 = id.update([movedA, movedB], labels1, W2, H2);
+  check("moved A stays slot 0", r3.ordered[0] === movedA);
+  check("moved B stays slot 1", r3.ordered[1] === movedB);
+
+  // Hand B disappears: only A remains, still in slot 0.
+  const r4 = id.update([movedA], labels1, W2, H2);
+  check("one hand: still slot 0", r4.ordered.length === 1 && r4.ordered[0] === movedA);
+
+  // Hand B returns: re-binds to slot 1 (not slot 0).
+  const backB = mkHand(900, 300);
+  const r5 = id.update([movedA, backB], labels1, W2, H2);
+  check("returning hand B re-binds to slot 1", r5.ordered[1] === backB, JSON.stringify(r5.indexMap));
+
+  // Small rotations do not swap identities.
+  const id2 = new HandIdentityTracker();
+  id2.update([handA, handB], labels1, W2, H2);
+  // Rotate both hands 30° around (600, 300).
+  const rot = (h) => h.map((p) => {
+    const dx = p.x * W2 - 600;
+    const dy = p.y * H2 - 300;
+    const rad = (30 * Math.PI) / 180;
+    return {
+      x: (600 + dx * Math.cos(rad) - dy * Math.sin(rad)) / W2,
+      y: (300 + dx * Math.sin(rad) + dy * Math.cos(rad)) / H2,
+      z: 0,
+    };
+  });
+  const r6 = id2.update([rot(handB), rot(handA)], labels1, W2, H2);
+  check("30° rotation: A stays slot 0", r6.ordered[0][0].x < r6.ordered[1][0].x, "A should be left of B");
+}
+
+console.log("\n[54] time-based hold — brief dropout holds, sustained loss releases");
+{
+  const t = new StickyFrameTracker();
+  const base = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  t.update(base, 0.016);
+  check("starts tracking", t.state === "tracking", t.state);
+
+  // 100 ms dropout (both hands gone): well within the 150 ms hold budget.
+  for (let i = 0; i < 6; i++) t.update(null, 0.016); // 96 ms
+  check("100 ms blind: still holding", t.state === "holding", t.state);
+  check("100 ms blind: window survived", t.value.length === 4);
+
+  // Recovery.
+  t.update(base, 0.016);
+  check("recovery resets to tracking", t.state === "tracking", t.state);
+  check("blindSeconds resets", t.blindSeconds === 0, String(t.blindSeconds));
+
+  // Sustained blindness past the budget: 200 ms > 150 ms.
+  for (let i = 0; i < 13; i++) t.update(null, 0.016); // 208 ms
+  check("200 ms blind: lost", t.state === "lost", t.state);
+  check("lost holds last position", t.value.length === 4);
+}
+
+console.log("\n[55] per-hand loss — losing ONE hand past the budget releases");
+{
+  const t = new StickyFrameTracker();
+  const base = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  t.update(base, 0.016);
+  check("starts tracking", t.state === "tracking", t.state);
+
+  // One hand's two anchors disappear (slots 0+1 lost, slots 2+3 still fed).
+  // handHoldSeconds = 0.4s → at 16 ms/frame that is 25 frames.
+  for (let i = 0; i < 20; i++) t.update([base[2], base[3]], 0.016); // 320 ms
+  check("320 ms one-hand blind: still holding", t.state === "holding", t.state);
+  check("window survived one-hand loss", t.value.length === 4);
+
+  // Past the per-hand budget: 450 ms > 400 ms.
+  for (let i = 0; i < 8; i++) t.update([base[2], base[3]], 0.016); // +128 ms = 448 ms
+  check("450 ms one-hand blind: lost", t.state === "lost", t.state);
+  check("lost still holds last position", t.value.length === 4);
+
+  // Recovery: both hands return, state resets.
+  t.update(base, 0.016);
+  check("recovery clears blindness", t.state === "tracking", t.state);
+  check(
+    "hand blind seconds reset",
+    t.handBlindSeconds.every((s) => s === 0),
+    JSON.stringify(t.handBlindSeconds)
   );
 }
 

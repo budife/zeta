@@ -9,7 +9,6 @@ import { FaceTracker } from "./FaceTracker";
 import { PoseTracker } from "./PoseTracker";
 import { RegionTracker } from "./RegionTracker";
 import { templateRegionFor } from "@/lib/templateRegions";
-import { TRACK_CONFIG } from "@/lib/frameTracker";
 import { effectStats } from "@/lib/effectEngine";
 
 export type DebugOverlayProps = {
@@ -129,6 +128,10 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
             <dd>{stats && stats.handedness.length ? stats.handedness.join(" ") : "—"}</dd>
           </div>
           <div>
+            <dt>Identity</dt>
+            <dd>{stats && stats.handIdentities.length ? stats.handIdentities.join(" / ") : "—"}</dd>
+          </div>
+          <div>
             <dt>Swipe</dt>
             <dd>
               {stats
@@ -219,8 +222,13 @@ export function DebugOverlay({ subscribe, enabled }: DebugOverlayProps) {
             <dd>{stats ? stats.selectionPhase.toUpperCase() : "—"}</dd>
           </div>
           <div>
-            <dt>Missed</dt>
-            <dd>{stats ? `${stats.missedFrames}/${TRACK_CONFIG.maxMissedFrames}` : "—"}</dd>
+            <dt>Blind</dt>
+            <dd>
+              {stats
+                ? `${stats.trackState === "lost" ? "LOST" : stats.missedFrames > 0 ? "HOLD" : "ok"} ` +
+                  `· ${stats.trackState}`
+                : "—"}
+            </dd>
           </div>
           <div>
             <dt>Track</dt>

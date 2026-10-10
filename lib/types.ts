@@ -185,7 +185,7 @@ export type Snapshot = {
   /**
    * Consecutive frames the window tracker has gone without usable corners.
    * Zero while tracking; counts up through the grace budget while holding; the
-   * frame releases once it passes `TRACK_CONFIG.maxMissedFrames`.
+   * frame releases once it passes the time-based hold budget.
    */
   missedFrames: number;
   /**
@@ -208,6 +208,13 @@ export type Snapshot = {
    * from gesture rejection at a glance.
    */
   handReasons: string[];
+  /**
+   * Persistent hand identity per detected hand ("Left" / "Right"), assigned
+   * by lib/handIdentity.ts. Debug readout: shows which physical hand is bound
+   * to which slot, so an identity swap (the cause of frame flips) is visible
+   * at a glance.
+   */
+  handIdentities: string[];
   /**
    * Which body part the hand-made window is framing. `kind` is null while the
    * frame is inactive or the classifier is not confident enough — the renderer

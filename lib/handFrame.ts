@@ -180,7 +180,11 @@ export function detectHandFrame(
 
   return {
     handCount: hands.length,
-    corners: sortAngular(corners),
+    // NOT angularly sorted: the engine reorders the hand arrays by persistent
+    // identity (lib/handIdentity.ts) before calling this function, so the
+    // corners already come out in a consistent slot order. Sorting by angle
+    // here would reintroduce the per-frame reorder that caused anchor swaps.
+    corners,
     gestures,
     reason: "corners-found",
   };
@@ -195,11 +199,15 @@ export function detectHandFrame(
 export function calculateFrame(corners: Point[]): FrameRect | null {
   if (!corners || corners.length !== 4) return null;
 
-  const c = centroid(corners);
+  // Sort angularly here (not in detectHandFrame): the rectangle-fit math
+  // needs consistently ordered corners, but the tracker must receive the
+  // raw hand-identity order so its nearest-slot matching stays stable.
+  const sorted = sortAngular(corners);
+  const c = centroid(sorted);
   // Opposite edges of a consistently-wound quadrilateral point in opposite
   // directions, so the second direction is reversed before averaging.
-  const ax = Math.atan2(corners[1].y - corners[0].y, corners[1].x - corners[0].x);
-  const ax2 = Math.atan2(corners[2].y - corners[3].y, corners[2].x - corners[3].x);
+  const ax = Math.atan2(sorted[1].y - sorted[0].y, sorted[1].x - sorted[0].x);
+  const ax2 = Math.atan2(sorted[2].y - sorted[3].y, sorted[2].x - sorted[3].x);
   let ux = Math.cos(ax) + Math.cos(ax2);
   let uy = Math.sin(ax) + Math.sin(ax2);
   if (Math.hypot(ux, uy) < 0.25) {
@@ -226,8 +234,8 @@ export function calculateFrame(corners: Point[]): FrameRect | null {
 
   // Pointing both axes at the same place makes them "opposite", regardless of
   // which corner the sort started at.
-  const e0x = corners[1].x - corners[0].x;
-  const e0y = corners[1].y - corners[0].y;
+  const e0x = sorted[1].x - sorted[0].x;
+  const e0y = sorted[1].y - sorted[0].y;
   if (e0x * ux + e0y * uy < 0) {
     ux = -ux;
     uy = -uy;
@@ -236,7 +244,7 @@ export function calculateFrame(corners: Point[]): FrameRect | null {
   const vy = ux;
 
   let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
-  for (const p of corners) {
+  for (const p of sorted) {
     const du = p.x - c.x;
     const dv = p.y - c.y;
     const u = du * ux + dv * uy;
