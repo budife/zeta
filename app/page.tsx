@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraView } from "@/components/CameraView";
 import { DebugOverlay } from "@/components/DebugOverlay";
 import { HandFrame } from "@/components/HandFrame";
-import { SavedFrames } from "@/components/SavedFrames";
 import { MediaLayer } from "@/components/MediaLayer";
 import { StatusPanel } from "@/components/StatusPanel";
 import { useHandFrameEngine } from "@/hooks/useHandFrameEngine";
@@ -167,7 +166,6 @@ export default function HomePage() {
               cameraVideoRef={videoRef}
             />
             <HandFrame subscribe={subscribeSnapshot} active={frameActive} debug={debug} />
-            <SavedFrames subscribe={subscribeSnapshot} />
             {menuOpen && (
               <MainMenu
                 subscribe={subscribeSnapshot}

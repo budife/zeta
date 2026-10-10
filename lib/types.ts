@@ -226,12 +226,6 @@ export type Snapshot = {
   faceAlign: import("./faceAlignment").Similarity | null;
   /** Pose landmarks of the detected person (empty when unavailable). */
   poseLandmarks: NormalizedLandmark[];
-  /**
-   * Corner arrays of every saved frame, oldest first. Each entry is a deep
-   * copy frozen at save time — these never move when the live frame updates.
-   * Empty when no frames have been saved.
-   */
-  savedCorners: Point[][];
   fps: number;
   /** Debug reason for the current frame-detection state. */
   reason: string;

@@ -28,8 +28,7 @@ import {
   type ModeEvent,
 } from "./modes";
 import { SwipeTracker, SWIPE_CONFIG, pickSwipeHand } from "./swipe";
-import { PinchCycleDetector, LeftPinchSaveDetector } from "./pinch";
-import { SavedFrameStore } from "./savedFrames";
+import { PinchCycleDetector } from "./pinch";
 import { nextEffect } from "./effects";
 import { EMPTY_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
@@ -143,10 +142,6 @@ export class HandFrameEngine {
   private swipeTracker = new SwipeTracker();
   /** Double-pinch effect cycling + pinch-held state for the freeze guard. */
   private pinchCycle = new PinchCycleDetector();
-  /** Left-hand double-pinch → save frame (PART D). */
-  private savePinch = new LeftPinchSaveDetector();
-  /** Persistent saved frames (PART E). Cleared on reset. */
-  private savedFrames = new SavedFrameStore();
 
   private faceState: FaceState = "none";
   private lastFaceBox: Box | null = null;
@@ -290,7 +285,6 @@ export class HandFrameEngine {
     this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.tracker.reset();
-    this.savedFrames.clear();
     this.patchStatus({
       frame: "inactive",
       face: "none",
@@ -541,31 +535,6 @@ export class HandFrameEngine {
       this.patchStatus(selectionPatch("effect", nextEffect(this.status.effect)));
     }
 
-    // ---------------------------------------------------------- save pinch
-    // Left-hand double-pinch → save the current frame geometry (PART D).
-    // Uses MediaPipe's handedness to pick the left hand; falls back to the
-    // hand with the smaller x-center when labels are ambiguous (mirrored
-    // camera). Only fires in FRAME_LOCKED with a live 4-corner frame.
-    const leftHandIndex = findLeftHandIndex(
-      rawHandLandmarks,
-      handResult.handednesses ?? null
-    );
-    const saveDouble = this.savePinch.update(
-      leftHandIndex >= 0 ? rawHandLandmarks[leftHandIndex] : null,
-      timestamp
-    );
-    if (
-      saveDouble &&
-      this.mode === "FRAME_LOCKED" &&
-      this.tracker.value &&
-      this.tracker.value.length === 4
-    ) {
-      this.savedFrames.save(this.tracker.value);
-      // Release the live frame: return to FRAME_SEARCH so the user can form
-      // a new one. Saved frames are untouched.
-      this.handleModeEvent({ type: "frameReleased" });
-    }
-
     // -------------------------------------------------------------- pointer
     // Index fingertip of the pointing hand, in raw video pixels: the same
     // hand pick as the swipe (right-preferred), falling back to any single
@@ -604,7 +573,7 @@ export class HandFrameEngine {
     // its double-pinch consumer above is unaffected.
     const gestureFrozen =
       this.mode === "FRAME_LOCKED" &&
-      (this.swipeTracker.gestureHeld || this.pinchCycle.held || this.savePinch.held);
+      (this.swipeTracker.gestureHeld || this.pinchCycle.held);
     const feedFrame = frameEnabled && !gestureFrozen;
 
     const detection: HandFrameDetection = detectHandFrame(
@@ -808,7 +777,6 @@ export class HandFrameEngine {
       regionTransform,
       faceAlign: active ? this.faceAlign : null,
       poseLandmarks: poseLandmarksThisFrame,
-      savedCorners: this.savedFrames.getCorners(),
       fps: this.fpsEma,
       reason: detection.corners.length === 4 ? validity.reason : detection.reason,
       videoWidth: width,
@@ -834,50 +802,6 @@ export class HandFrameEngine {
 
     for (const listener of this.snapshotListeners) listener(snapshot);
   };
-}
-
-/**
- * Finds the index of the LEFT hand among the detected hands.
- *
- * Primary signal: MediaPipe's handedness category ("Left"). Because the
- * engine feeds the raw (unmirrored) frame while MediaPipe assumes a mirrored
- * input, the labels can come back reversed — so the spatial fallback picks
- * the hand whose x-centre is smallest in the raw frame (image-left), which
- * after the display mirror corresponds to the user's right hand… but within
- * a session the label and the spatial fallback are consistent with each
- * other, so the user simply uses whichever hand the detector picks.
- *
- * Returns -1 when no hand is detected.
- */
-function findLeftHandIndex(
-  landmarks: import("./types").NormalizedLandmark[][],
-  handednesses: Array<Array<{ categoryName: string; score: number }>> | null
-): number {
-  if (!landmarks || landmarks.length === 0) return -1;
-
-  // Try MediaPipe's label first.
-  if (handednesses) {
-    for (let i = 0; i < handednesses.length; i++) {
-      const h = handednesses[i]?.[0];
-      if (h && h.categoryName === "Left") return i;
-    }
-  }
-
-  // Spatial fallback: the hand with the smallest x-centre.
-  let best = 0;
-  let bestX = Infinity;
-  for (let i = 0; i < landmarks.length; i++) {
-    const hand = landmarks[i];
-    if (!hand || hand.length === 0) continue;
-    let sum = 0;
-    for (const lm of hand) sum += lm.x;
-    const cx = sum / hand.length;
-    if (cx < bestX) {
-      bestX = cx;
-      best = i;
-    }
-  }
-  return best;
 }
 
 export { HAND_CONNECTIONS, rectCorners };
