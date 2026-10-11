@@ -182,8 +182,15 @@ export function detectHandFrame(
     handCount: hands.length,
     // NOT angularly sorted: the engine reorders the hand arrays by persistent
     // identity (lib/handIdentity.ts) before calling this function, so the
-    // corners already come out in a consistent slot order. Sorting by angle
-    // here would reintroduce the per-frame reorder that caused anchor swaps.
+    // corners already come out in a consistent slot order (hand 0's thumb and
+    // index, then hand 1's). Sorting by angle here would reintroduce the
+    // per-frame reorder that caused anchor swaps — and identity order is what
+    // the tracker's nearest-slot matching wants to see.
+    //
+    // Hand-grouped corners are a BOWTIE for the side-by-side frame pose, so
+    // the consumers that trace a polygon sort a copy themselves:
+    //   - isValidQuad(): the simple-quad test needs perimeter order;
+    //   - the snapshot's windowCorners (outline, clip-path, effect render).
     corners,
     gestures,
     reason: "corners-found",

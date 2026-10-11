@@ -10,6 +10,7 @@ import type {
 import {
   HAND_CONNECTIONS,
   rectCorners,
+  sortAngular,
   toPixelLandmarks,
 } from "./geometry";
 import {
@@ -598,8 +599,12 @@ export class HandFrameEngine {
       (this.swipeTracker.gestureHeld || this.pinchCycle.held);
     const feedFrame = frameEnabled && !gestureFrozen;
 
+    // Detect on the IDENTITY-REORDERED landmarks, not MediaPipe's raw order:
+    // detectHandFrame emits corners grouped per hand in input order, so the
+    // slot binding above is what keeps the corner grouping stable frame to
+    // frame (lib/handFrame.ts documents this contract).
     const detection: HandFrameDetection = detectHandFrame(
-      handResult.landmarks,
+      rawHandLandmarks,
       width,
       height,
       wasActive ? "track" : "acquire"
@@ -609,8 +614,13 @@ export class HandFrameEngine {
     // must enclose a real window before it may lock; once locked, only
     // genuinely degenerate geometry fails, so the frame keeps following the
     // hands at any size, tilt or skew — even past the stage edge.
+    // Validity runs on a PERIMETER-SORTED copy: the simple-quad test walks
+    // the polygon in the given order, and hand-grouped corners (thumb, index)
+    // trace a bowtie for the side-by-side frame pose. The tracker below keeps
+    // the unsorted identity order; the snapshot publishes a sorted copy for
+    // the polygon/clip consumers.
     const validity = isValidQuad(
-      detection.corners,
+      sortAngular(detection.corners),
       width,
       height,
       wasActive ? "track" : "acquire"
@@ -788,7 +798,11 @@ export class HandFrameEngine {
       pointer,
       handedness: handednessLabels,
       swipe: this.swipeTracker.debugState(timestamp, swipeHandIndex),
-      windowCorners,
+      // Perimeter-sorted for the polygon consumers (outline, clip-path,
+      // effect render): the tracker holds identity order — hand-grouped
+      // corners trace a bowtie for the side-by-side pose — but a polygon
+      // must be traced in perimeter order to close as a simple quad.
+      windowCorners: sortAngular(windowCorners),
       frameActive: active,
       selectionPhase: this.selection.phase,
       missedFrames: this.tracker.missedFrames,

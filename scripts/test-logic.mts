@@ -89,7 +89,12 @@ import {
 } from "../lib/menuModel";
 import { templateRegionFor } from "../lib/templateRegions";
 import { mapRegionTransform } from "../lib/regionMapping";
-import { advanceFrameActivity, FRAME_CONFIG, INITIAL_FRAME_ACTIVITY } from "../lib/geometry";
+import {
+  advanceFrameActivity,
+  FRAME_CONFIG,
+  INITIAL_FRAME_ACTIVITY,
+  sortAngular,
+} from "../lib/geometry";
 import {
   solveSimilarity,
   applySimilarity,
@@ -1180,7 +1185,7 @@ console.log("\n[29] sticky lock end-to-end — acquire, lock, dropout, release")
   const step = (landmarks) => {
     const wasActive = selectionIsActive(selection.phase);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(sortAngular(det.corners), W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = hasCorners && validity.valid;
     tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
@@ -1359,7 +1364,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const wasActive = selectionIsActive(selection.phase);
     const frameEnabled = handFrameAllowed(modeNow);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(sortAngular(det.corners), W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = frameEnabled && hasCorners && validity.valid;
     if (frameEnabled) {
@@ -1443,7 +1448,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const frameEnabled = handFrameAllowed(modeNow);
     const feedFrame = frameEnabled && !(modeNow === "FRAME_LOCKED" && sw.gestureHeld);
     const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-    const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(sortAngular(det.corners), W, H, wasActive ? "track" : "acquire");
     const hasCorners = det.corners.length === 4;
     const usable = feedFrame && hasCorners && validity.valid;
     if (feedFrame) {
@@ -2577,7 +2582,7 @@ console.log(
   let selection = INITIAL_SELECTION;
   const step = (corners) => {
     const wasActive = selectionIsActive(selection.phase);
-    const validity = isValidQuad(corners, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(sortAngular(corners), W, H, wasActive ? "track" : "acquire");
     const usable = corners.length === 4 && validity.valid;
     tracker.update(usable ? corners : null, 0.016);
     const advance = advanceSelection(selection, {
@@ -2776,7 +2781,7 @@ console.log(
     const step = (landmarks) => {
       const wasActive = selectionIsActive(selection.phase);
       const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
-      const validity = isValidQuad(det.corners, W, H, wasActive ? "track" : "acquire");
+      const validity = isValidQuad(sortAngular(det.corners), W, H, wasActive ? "track" : "acquire");
       const hasCorners = det.corners.length === 4;
       const usable = hasCorners && validity.valid;
       tracker.update(
@@ -3123,6 +3128,28 @@ console.log("\n[53] hand identity — stable slot binding across frames");
   });
   const r6 = id2.update([rot(handB), rot(handA)], labels1, W2, H2);
   check("30° rotation: A stays slot 0", r6.ordered[0][0].x < r6.ordered[1][0].x, "A should be left of B");
+
+  // Regression: the FIRST frame may show only ONE hand. The left/right slot
+  // pair must exist from that moment — a single-slot array threw a TypeError
+  // ("Cannot set properties of undefined") on this frame's unbound-slot sweep
+  // and again on the next two-hand frame, crashing the engine tick before it
+  // could patch status: the UI read "0 detected" whatever MediaPipe saw.
+  const id3 = new HandIdentityTracker();
+  let singleOk = false;
+  let thenTwoOk = false;
+  try {
+    const rSingle = id3.update([handA], labels1, W2, H2);
+    singleOk = rSingle.ordered.length === 1 && rSingle.ordered[0] === handA;
+    const rBoth = id3.update([handA, handB], labels1, W2, H2);
+    thenTwoOk =
+      rBoth.ordered.length === 2 &&
+      rBoth.ordered[0] === handA &&
+      rBoth.ordered[1] === handB;
+  } catch {
+    /* the crash itself is the failure under test */
+  }
+  check("1-hand first frame survives (no crash)", singleOk);
+  check("next 2-hand frame re-binds both slots", thenTwoOk);
 }
 
 console.log("\n[54] time-based hold — brief dropout holds, sustained loss releases");
@@ -3174,6 +3201,30 @@ console.log("\n[55] per-hand loss — losing ONE hand past the budget releases")
     t.handBlindSeconds.every((s) => s === 0),
     JSON.stringify(t.handBlindSeconds)
   );
+}
+
+console.log("\n[56] engine rule — side-by-side pose acquires via the perimeter sort");
+{
+  // The real frame pose: two hands side by side, each an L whose thumb and
+  // index tips form the left / right edge of the window. detectHandFrame
+  // emits corners HAND-GROUPED (thumb, index of hand 0, then hand 1) because
+  // the engine feeds it identity-ordered landmarks — and that order traces a
+  // BOWTIE for this pose. The engine therefore validates a perimeter-sorted
+  // copy (lib/engine.ts) while the tracker keeps the identity order.
+  const leftHand = hand({ x: 340, y: 430 }, { x: 340, y: 180 }, 70);
+  const rightHand = hand({ x: 940, y: 430 }, { x: 940, y: 180 }, 70);
+  const det = detectHandFrame([toNorm(leftHand), toNorm(rightHand)], W, H, "acquire");
+  check("side-by-side pose yields 4 corners", det.corners.length === 4, det.reason);
+  if (det.corners.length === 4) {
+    const handOrder = isValidQuad(det.corners, W, H, "acquire");
+    check(
+      "hand-grouped order is a bowtie (why the engine sorts)",
+      !handOrder.valid,
+      handOrder.reason
+    );
+    const engineRule = isValidQuad(sortAngular(det.corners), W, H, "acquire");
+    check("engine rule (sorted copy) acquires", engineRule.valid, engineRule.reason);
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

@@ -110,6 +110,20 @@ export class HandIdentityTracker {
         label: handedness?.[i]?.[0]?.categoryName ?? null,
         ...centres[i],
       }));
+      // Always keep BOTH slots. The first frame may show only one hand, but
+      // every matching and output loop below walks the left/right pair: a
+      // single-slot array threw a TypeError ("Cannot set properties of
+      // undefined") on that frame's unbound-slot sweep and again on the next
+      // two-hand frame, which crashed the engine tick before it could patch
+      // status — the UI then read "0 detected" no matter what MediaPipe saw.
+      if (this.slots.length < 2) {
+        this.slots.push({
+          bound: false,
+          label: null,
+          cx: this.slots[0].cx,
+          cy: this.slots[0].cy,
+        });
+      }
       justInitialised = true;
     }
 
