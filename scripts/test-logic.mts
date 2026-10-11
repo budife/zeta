@@ -8,7 +8,7 @@ import { ASCII_RAMP, asciiGridForStage, asciiRampIndex, asciiPalette, asciiCellS
 import { isCanvasMotion, FrameHistory, echoAlpha, shutterWeight, MOTION_TUNING } from "../lib/motionEngine";
 import { isOverlayTemplate, overlayStyle, landmarksToPixels, FACE_WIRE_EDGES, POSE_SKELETON_EDGES } from "../lib/overlayTemplates";
 import { faceInSelection, computeFaceBox } from "../lib/faceTracking";
-import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_FRAMES } from "../lib/frameTracker";
+import { StickyFrameTracker, TRACK_CONFIG, FORMING_HOLD_SECONDS } from "../lib/frameTracker";
 import { HandIdentityTracker } from "../lib/handIdentity";
 import { HandFrameEngine } from "../lib/engine";
 import {
@@ -1189,7 +1189,7 @@ console.log("\n[29] sticky lock end-to-end — acquire, lock, dropout, release")
     const hasCorners = det.corners.length === 4;
     const usable = hasCorners && validity.valid;
     tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
-    if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+    if (!wasActive && tracker.blindSeconds > FORMING_HOLD_SECONDS) tracker.reset();
     const advance = advanceSelection(selection, {
       valid: wasActive ? tracker.state !== "lost" : usable,
       hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
@@ -1369,7 +1369,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const usable = frameEnabled && hasCorners && validity.valid;
     if (frameEnabled) {
       tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
-      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      if (!wasActive && tracker.blindSeconds > FORMING_HOLD_SECONDS) tracker.reset();
       const advance = advanceSelection(selection, {
         valid: wasActive ? tracker.state !== "lost" : usable,
         hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
@@ -1453,7 +1453,7 @@ console.log("\n[30] mode machine — frame search is gated by mode (TEST 1 / 2)"
     const usable = feedFrame && hasCorners && validity.valid;
     if (feedFrame) {
       tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, 0.016);
-      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      if (!wasActive && tracker.blindSeconds > FORMING_HOLD_SECONDS) tracker.reset();
       const advance = advanceSelection(selection, {
         valid: wasActive ? tracker.state !== "lost" : usable,
         hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
@@ -2788,7 +2788,7 @@ console.log(
         usable || (wasActive && det.corners.length > 0) ? det.corners : null,
         0.016
       );
-      if (!wasActive && tracker.missedFrames > FORMING_HOLD_FRAMES) tracker.reset();
+      if (!wasActive && tracker.blindSeconds > FORMING_HOLD_SECONDS) tracker.reset();
       const advance = advanceSelection(selection, {
         valid: wasActive ? tracker.state !== "lost" : usable,
         hasCorners: hasCorners || (wasActive && (tracker.value?.length ?? 0) === 4),
@@ -3225,6 +3225,62 @@ console.log("\n[56] engine rule — side-by-side pose acquires via the perimeter
     const engineRule = isValidQuad(sortAngular(det.corners), W, H, "acquire");
     check("engine rule (sorted copy) acquires", engineRule.valid, engineRule.reason);
   }
+}
+
+console.log("\n[57] forming hold is time-based, not frame-count-based");
+{
+  // The stale-dots cleanup while FORMING must expire after the same wall-clock
+  // duration at any fps. A frame-count rule derived from blindSeconds*60
+  // silently rounded: at 17 fps one blind frame is 58 ms — already past the
+  // 50 ms budget — but round(3.48) = 3 made it hold, so a low-fps camera left
+  // orphan dots for an extra frame.
+  const base = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  const eng = new HandFrameEngine();
+  const tracker = new StickyFrameTracker();
+  let selection = INITIAL_SELECTION;
+
+  // Replica of the engine's forming-hold rule (engine.ts).
+  const step = (landmarks, dt) => {
+    const wasActive = selectionIsActive(selection.phase);
+    const det = detectHandFrame(landmarks, W, H, wasActive ? "track" : "acquire");
+    const validity = isValidQuad(sortAngular(det.corners), W, H, wasActive ? "track" : "acquire");
+    const usable = det.corners.length === 4 && validity.valid;
+    tracker.update(usable || (wasActive && det.corners.length > 0) ? det.corners : null, dt);
+    if (!wasActive && tracker.blindSeconds > FORMING_HOLD_SECONDS) tracker.reset();
+    const advance = advanceSelection(selection, {
+      valid: wasActive ? tracker.state !== "lost" : usable,
+      hasCorners: det.corners.length === 4 || (wasActive && (tracker.value?.length ?? 0) === 4),
+    });
+    selection = advance.state;
+    if (advance.deactivated) tracker.reset();
+    return tracker.value;
+  };
+
+  // Establish a forming window (not yet locked: one valid frame is only a
+  // candidate, so wasActive stays false here).
+  step([toNorm(hand({ x: 300, y: 180 }, { x: 560, y: 180 }, 70)), toNorm(hand({ x: 900, y: 560 }, { x: 640, y: 560 }, 70))], 0.016);
+  check("forming window has corners before the dropout", (tracker.value?.length ?? 0) === 4);
+
+  // 17 fps: ONE blind frame of 58 ms already exceeds the 50 ms budget.
+  step(null, 0.058);
+  check("17 fps: one 58 ms blind frame clears the forming dots", (tracker.value?.length ?? 0) === 0, `blindSeconds=${tracker.blindSeconds.toFixed(3)}`);
+
+  // At 60 fps the same budget needs ~3 frames, so one short miss must hold.
+  tracker.update(base, 0.016); // re-establish
+  check("re-established", (tracker.value?.length ?? 0) === 4);
+  step(null, 0.016);
+  check("60 fps: one 16 ms miss still holds", (tracker.value?.length ?? 0) === 4, `blindSeconds=${tracker.blindSeconds.toFixed(3)}`);
+
+  // B1 note: engine.reset() -> clearFrameState() -> handIdentity.reset() is
+  // NOT asserted here. Populating the identity slots requires a real
+  // MediaPipe detectForVideo(), so this test file cannot distinguish "reset
+  // cleared the slots" from "the slots were never set". The wiring is
+  // covered by inspection only (see the audit: B1).
 }
 
 console.log(`\n${failures === 0 ? "ALL LOGIC CHECKS PASSED" : `${failures} FAILURE(S)`}`);

@@ -34,7 +34,7 @@ import { nextEffect } from "./effects";
 import { EMPTY_SELECTION, TOP_LEVEL_ITEMS, selectionPatch, type TopLevelItem } from "./menuModel";
 import { computeFaceBox, faceInSelection } from "./faceTracking";
 import { smoothingAlpha } from "./smoothing";
-import { StickyFrameTracker, FORMING_HOLD_FRAMES } from "./frameTracker";
+import { StickyFrameTracker, FORMING_HOLD_SECONDS } from "./frameTracker";
 import { HandIdentityTracker } from "./handIdentity";
 import {
   advanceRegion,
@@ -294,6 +294,11 @@ export class HandFrameEngine {
     this.faceAlign = { scale: 1, rotation: 0, tx: 0, ty: 0 };
     this.regionLock = { kind: null, label: "—", confidence: 0 };
     this.tracker.reset();
+    // Slot binding survives between frames by design, but NOT across a
+    // session boundary: after the camera is turned off the hands' positions
+    // are meaningless, and the stale centres would bind the next session's
+    // first hands to whichever slot used to be nearer.
+    this.handIdentity.reset();
     this.patchStatus({
       frame: "inactive",
       face: "none",
@@ -450,6 +455,7 @@ export class HandFrameEngine {
     this.loadingModels = null;
     this.snapshotListeners.clear();
     this.statusListeners.clear();
+    this.handIdentity.reset();
     this.handLandmarker?.close();
     this.faceLandmarker?.close();
     this.poseLandmarker?.close();
@@ -640,17 +646,17 @@ export class HandFrameEngine {
       // While still FORMING the window is not yet a selection, so stale dots
       // are cleared shortly after the hands leave. A live selection holds for
       // the full grace budget — the machine, not the tracker, decides when it
-      // ends.
-      if (!wasActive && this.tracker.missedFrames > FORMING_HOLD_FRAMES) {
+      // ends. Time-based so the hold is identical at 15 fps and 120 fps.
+      if (!wasActive && this.tracker.blindSeconds > FORMING_HOLD_SECONDS) {
         this.tracker.reset();
       }
     }
     const windowCorners = this.tracker.value ?? [];
 
     // RELEASE RULE: while locked, the selection is only invalid when the
-    // tracker has given up — i.e. BOTH hands were genuinely gone for
-    // maxMissedFrames (per-slot: one hand lost at the edge never reaches the
-    // clock). A tilted, trapezoid, partially-detected or momentarily misread
+    // tracker has given up — i.e. BOTH hands were genuinely gone past
+    // `holdSeconds`, or one hand gone past `handHoldSeconds` (per-slot: one
+    // hand lost at the edge never reaches the total-blindness clock). A tilted, trapezoid, partially-detected or momentarily misread
     // frame never counts toward release on its own. While acquiring, the
     // strict quad check still gates the initial lock. (Both blocks share
     // `feedFrame`: the gesture guard freezes the whole selection advance,

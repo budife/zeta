@@ -58,12 +58,14 @@ export const TRACK_CONFIG = {
 } as const;
 
 /**
- * How many consecutive fully-blind frames the window tolerates while still
- * merely FORMING (not yet locked) before the stale dots are cleared. A live
- * selection holds for the full `maxMissedFrames`; a forming one should not
- * leave orphan dots sitting where the hands used to be.
+ * How long a fully-blind window tolerates staying alive while still merely
+ * FORMING (not yet locked) before the stale dots are cleared. Time-based, not
+ * frame-count-based: at 15 fps one frame already exceeds a 3-frame budget, so
+ * a count would clear the dots on the first miss. A live selection holds for
+ * the full `holdSeconds`; a forming one should not leave orphan dots sitting
+ * where the hands used to be.
  */
-export const FORMING_HOLD_FRAMES = 3;
+export const FORMING_HOLD_SECONDS = 0.05;
 
 /** What the tracker is doing this frame — drives the selection machine. */
 export type TrackState =
